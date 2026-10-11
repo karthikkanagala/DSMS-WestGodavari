@@ -3,7 +3,7 @@ DSMS Full-Scale Seed Script
 Populates MongoDB with realistic demo data.
 Supports both direct execution and import via run_seed(db).
 """
-import random, bcrypt
+import os, random, bcrypt
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 
