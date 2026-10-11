@@ -1,13 +1,14 @@
 /**
  * Submit Collection — Mobile Waste Log & Update Portal:
- * - Camera Capture & File Upload with preview, validation (format, <=5MB), retake/remove
- * - Truthful GPS Location Tagging via Geolocation API (captured, denied, unavailable, pending)
+ * - Real Camera Capture via MediaDevices.getUserMedia() (live video → canvas snapshot)
+ * - File Upload fallback (separate button, existing workflow)
+ * - Photo preview, validation (format, <=5MB), retake/remove
+ * - Truthful GPS Location Tagging via Geolocation API
  * - OpenStreetMap Link & manual fallback distinction
  * - Dual Mode: Routine Collection vs Bin Overflow Reporting
  * - Browser storage persistence via mockStorage.js
- * - Local demonstration record clearly identified
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import API from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
@@ -19,7 +20,8 @@ import {
 } from '../../utils/mockStorage';
 import {
   ArrowLeft, Trash2, Camera, Image as ImageIcon, CheckCircle2, AlertCircle,
-  MapPin, ShieldCheck, Scale, Check, RefreshCw, X, RotateCcw, ExternalLink, AlertTriangle
+  MapPin, ShieldCheck, Scale, Check, RefreshCw, X, RotateCcw, ExternalLink,
+  AlertTriangle, VideoOff, Aperture
 } from 'lucide-react';
 
 const FALLBACK_BINS = [
@@ -47,8 +49,7 @@ export default function SubmitCollection() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
 
-  // Photo Capture State
-  const cameraInputRef = useRef(null);
+  // Photo State
   const fileInputRef = useRef(null);
   const [photoFile, setPhotoFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -56,129 +57,221 @@ export default function SubmitCollection() {
   const [photoError, setPhotoError] = useState('');
   const [compressing, setCompressing] = useState(false);
 
+  // ── Camera Modal State (getUserMedia) ──────────────────────────────────────
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);          // holds the active MediaStream
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);  // video playing
+  const [cameraBusy, setCameraBusy] = useState(false);    // starting up
+  const [cameraError, setCameraError] = useState('');     // permission / hw error
+  const [capturedFrame, setCapturedFrame] = useState(''); // data URL of snapshot
+
   // Location Tagging State
-  // Statuses: 'idle' | 'pending' | 'captured' | 'denied' | 'unavailable'
   const [locationStatus, setLocationStatus] = useState('idle');
   const [coords, setCoords] = useState(null);
   const [locationErrorMsg, setLocationErrorMsg] = useState('');
 
-  // Clean up object URLs to prevent memory leaks
+  // ── Stop all tracks ────────────────────────────────────────────────────────
+  const stopStream = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    setCameraReady(false);
+    setCapturedFrame('');
+  }, []);
+
+  // ── Close camera modal cleanly ─────────────────────────────────────────────
+  const closeCamera = useCallback(() => {
+    stopStream();
+    setCameraOpen(false);
+    setCameraError('');
+    setCameraBusy(false);
+  }, [stopStream]);
+
+  // ── Open camera via getUserMedia ───────────────────────────────────────────
+  const openCamera = useCallback(async () => {
+    // Prevent double-open
+    if (cameraOpen || cameraBusy) return;
+
+    // Check API availability
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setCameraError(
+        'Camera API is not supported in this browser. Use a modern browser (Chrome, Safari, Firefox) over HTTPS or localhost, or use "Upload Photo" instead.'
+      );
+      setCameraOpen(true);
+      return;
+    }
+
+    setCameraBusy(true);
+    setCameraError('');
+    setCapturedFrame('');
+    setCameraOpen(true);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' }, // prefer rear camera
+          width:  { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+      streamRef.current = stream;
+
+      // Attach stream to video element once the modal DOM is mounted
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.onloadedmetadata = () => {
+          videoRef.current.play().catch(() => {});
+          setCameraReady(true);
+          setCameraBusy(false);
+        };
+      } else {
+        // videoRef not yet in DOM; try again after a paint
+        setTimeout(() => {
+          if (videoRef.current && streamRef.current) {
+            videoRef.current.srcObject = streamRef.current;
+            videoRef.current.onloadedmetadata = () => {
+              videoRef.current.play().catch(() => {});
+              setCameraReady(true);
+              setCameraBusy(false);
+            };
+          }
+        }, 120);
+      }
+    } catch (err) {
+      let msg = 'Camera could not be started.';
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        msg = 'Camera permission was denied. Please allow camera access in your browser settings, then try again. You can still use "Upload Photo" to choose an image from your device.';
+      } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+        msg = 'No camera was found on this device. Please use "Upload Photo" to choose an image from your device.';
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        msg = 'Camera is in use by another application. Close the other application and try again.';
+      } else if (err.name === 'OverconstrainedError') {
+        msg = 'Camera could not match the required settings. Retrying with default settings…';
+        // Retry with relaxed constraints
+        try {
+          const stream2 = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          streamRef.current = stream2;
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream2;
+            videoRef.current.onloadedmetadata = () => {
+              videoRef.current.play().catch(() => {});
+              setCameraReady(true);
+              setCameraBusy(false);
+              setCameraError('');
+            };
+          }
+          return;
+        } catch (_) {}
+      }
+      setCameraError(msg);
+      setCameraBusy(false);
+      stopStream();
+    }
+  }, [cameraOpen, cameraBusy, stopStream]);
+
+  // ── Capture a frame from the live video via canvas ─────────────────────────
+  const takePhoto = useCallback(() => {
+    if (!videoRef.current || !canvasRef.current || !cameraReady) return;
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    canvas.width  = video.videoWidth  || 1280;
+    canvas.height = video.videoHeight || 720;
+
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    setCapturedFrame(dataUrl);
+    // Pause video (stream still running for retake)
+    video.pause();
+  }, [cameraReady]);
+
+  // ── Retake — resume video, discard frame ───────────────────────────────────
+  const retakePhoto = useCallback(() => {
+    setCapturedFrame('');
+    if (videoRef.current && streamRef.current) {
+      videoRef.current.play().catch(() => {});
+    }
+  }, []);
+
+  // ── Use the captured frame — convert to File and run through existing workflow
+  const usePhoto = useCallback(async () => {
+    if (!capturedFrame) return;
+
+    // Convert data URL → Blob → File
+    const res = await fetch(capturedFrame);
+    const blob = await res.blob();
+    const filename = `camera_capture_${Date.now()}.jpg`;
+    const file = new File([blob], filename, { type: 'image/jpeg' });
+
+    // Validate (size, type)
+    const validation = validateImageFile(file);
+    if (!validation.valid) {
+      setPhotoError(validation.error);
+      closeCamera();
+      return;
+    }
+
+    // Revoke old preview
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
+    }
+
+    const objUrl = URL.createObjectURL(blob);
+    setPreviewUrl(objUrl);
+    setPhotoFile(file);
+    setPhotoError('');
+
+    // Compress for storage (re-use the data URL we already have)
+    setCompressing(true);
+    try {
+      const compressed = await compressImageToDataUrl(file);
+      setCompressedDataUrl(compressed);
+    } catch (_) {
+      setCompressedDataUrl(capturedFrame); // fallback: use raw data URL
+    } finally {
+      setCompressing(false);
+    }
+
+    closeCamera();
+  }, [capturedFrame, previewUrl, closeCamera]);
+
+  // Stop stream on unmount / navigate away
   useEffect(() => {
     return () => {
+      stopStream();
       if (previewUrl && previewUrl.startsWith('blob:')) {
         URL.revokeObjectURL(previewUrl);
       }
     };
-  }, [previewUrl]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
-    fetchAssignedBins();
-    // Attempt automatic GPS tagging once on mount if supported
-    acquireGpsLocation();
-  }, []);
-
-  const fetchAssignedBins = async () => {
-    try {
-      const res = await API.get('/bins');
-      const list = res.data?.data || res.data?.bins || [];
-      if (list.length > 0) {
-        setBins(list);
-        handleSelectBin(list[0]);
-      } else {
-        setBins(FALLBACK_BINS);
-        handleSelectBin(FALLBACK_BINS[0]);
-      }
-    } catch (_) {
-      setBins(FALLBACK_BINS);
-      handleSelectBin(FALLBACK_BINS[0]);
-    }
-  };
-
-  const handleSelectBin = (bin) => {
-    if (!bin) return;
-    setSelectedBinId(bin._id);
-    setSelectedBin(bin);
-    setWasteKg(Math.round(bin.capacity_kg * 0.85).toString());
-  };
-
-  const handleBinSelectChange = (e) => {
-    const id = e.target.value;
-    setSelectedBinId(id);
-    const found = bins.find((b) => b._id === id);
-    if (found) handleSelectBin(found);
-  };
-
-  // Geolocation API handler
-  const acquireGpsLocation = () => {
-    if (!navigator.geolocation) {
-      setLocationStatus('unavailable');
-      setLocationErrorMsg('Geolocation is not supported by your browser.');
-      return;
-    }
-
-    setLocationStatus('pending');
-    setLocationErrorMsg('');
-
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setCoords({
-          lat: Number(pos.coords.latitude.toFixed(6)),
-          lng: Number(pos.coords.longitude.toFixed(6)),
-          accuracy: Math.round(pos.coords.accuracy),
-          timestamp: new Date(pos.timestamp).toISOString(),
-        });
-        setLocationStatus('captured');
-      },
-      (err) => {
-        if (err.code === 1) {
-          // PERMISSION_DENIED
-          setLocationStatus('denied');
-          setLocationErrorMsg('Location permission was denied. You can retry or rely on the selected bin location.');
-        } else if (err.code === 2) {
-          // POSITION_UNAVAILABLE
-          setLocationStatus('unavailable');
-          setLocationErrorMsg('GPS position unavailable. Fallback to manually selected bin location.');
-        } else {
-          // TIMEOUT or unknown
-          setLocationStatus('unavailable');
-          setLocationErrorMsg('GPS request timed out. Fallback to manually selected bin location.');
-        }
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 30000,
-      }
-    );
-  };
-
-  // Photo selection handler (camera or file picker)
+  // ── File picker handler (unchanged) ───────────────────────────────────────
   const handlePhotoSelect = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // Reset input so same file can be picked again if needed
     e.target.value = '';
     setPhotoError('');
 
-    // Validation
     const validation = validateImageFile(file);
     if (!validation.valid) {
       setPhotoError(validation.error);
       return;
     }
 
-    // Revoke previous object URL
     if (previewUrl && previewUrl.startsWith('blob:')) {
       URL.revokeObjectURL(previewUrl);
     }
 
-    // Create object URL for instant preview
     const objUrl = URL.createObjectURL(file);
     setPreviewUrl(objUrl);
     setPhotoFile(file);
 
-    // Compress in background for lightweight storage
     setCompressing(true);
     try {
       const compressed = await compressImageToDataUrl(file);
@@ -200,6 +293,77 @@ export default function SubmitCollection() {
     setPhotoFile(null);
     setPhotoError('');
   };
+
+  // ── Bin data loading ───────────────────────────────────────────────────────
+  const handleSelectBin = (bin) => {
+    if (!bin) return;
+    setSelectedBinId(bin._id);
+    setSelectedBin(bin);
+    setWasteKg(Math.round(bin.capacity_kg * 0.85).toString());
+  };
+
+  const handleBinSelectChange = (e) => {
+    const id = e.target.value;
+    setSelectedBinId(id);
+    const found = bins.find((b) => b._id === id);
+    if (found) handleSelectBin(found);
+  };
+
+  const fetchAssignedBins = async () => {
+    try {
+      const res = await API.get('/bins');
+      const list = res.data?.data || res.data?.bins || [];
+      if (list.length > 0) {
+        setBins(list);
+        handleSelectBin(list[0]);
+      } else {
+        setBins(FALLBACK_BINS);
+        handleSelectBin(FALLBACK_BINS[0]);
+      }
+    } catch (_) {
+      setBins(FALLBACK_BINS);
+      handleSelectBin(FALLBACK_BINS[0]);
+    }
+  };
+
+  // ── Geolocation API ────────────────────────────────────────────────────────
+  const acquireGpsLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus('unavailable');
+      setLocationErrorMsg('Geolocation is not supported by your browser.');
+      return;
+    }
+    setLocationStatus('pending');
+    setLocationErrorMsg('');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setCoords({
+          lat: Number(pos.coords.latitude.toFixed(6)),
+          lng: Number(pos.coords.longitude.toFixed(6)),
+          accuracy: Math.round(pos.coords.accuracy),
+          timestamp: new Date(pos.timestamp).toISOString(),
+        });
+        setLocationStatus('captured');
+      },
+      (err) => {
+        if (err.code === 1) {
+          setLocationStatus('denied');
+          setLocationErrorMsg('Location permission was denied. You can retry or rely on the selected bin location.');
+        } else if (err.code === 2) {
+          setLocationStatus('unavailable');
+          setLocationErrorMsg('GPS position unavailable. Fallback to manually selected bin location.');
+        } else {
+          setLocationStatus('unavailable');
+          setLocationErrorMsg('GPS request timed out. Fallback to manually selected bin location.');
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+  };
+
+  // ── Mount: load bins and acquire GPS ──────────────────────────────────────
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { fetchAssignedBins(); acquireGpsLocation(); }, []);
 
   const handleReset = () => {
     if (bins.length > 0) handleSelectBin(bins[0]);
@@ -282,6 +446,7 @@ export default function SubmitCollection() {
   };
 
   return (
+    <>
     <div className="max-w-xl mx-auto space-y-4 py-2 animate-fade-in pb-12 select-none">
       
       {/* Top Header */}
@@ -440,7 +605,7 @@ export default function SubmitCollection() {
             </div>
           </div>
 
-          {/* FEATURE ONE A & B: Photo Capture & Evidence Upload */}
+          {/* FEATURE ONE A & B: Live Camera Capture & File Upload Evidence */}
           <div className="space-y-2 pt-1 border-t border-slate-100 dark:border-gray-800">
             <div className="flex items-center justify-between">
               <label className="form-label font-bold text-slate-800 dark:text-gray-200 mb-0 flex items-center gap-1.5">
@@ -449,15 +614,7 @@ export default function SubmitCollection() {
               <span className="text-[10px] text-slate-400 font-medium">Max 5 MB • JPEG/PNG/WebP</span>
             </div>
 
-            {/* Hidden file inputs for Camera and File picker */}
-            <input
-              ref={cameraInputRef}
-              type="file"
-              accept="image/*"
-              capture="environment"
-              onChange={handlePhotoSelect}
-              className="hidden"
-            />
+            {/* Hidden file input — Upload only (NOT camera) */}
             <input
               ref={fileInputRef}
               type="file"
@@ -499,7 +656,7 @@ export default function SubmitCollection() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => cameraInputRef.current?.click()}
+                      onClick={openCamera}
                       className="text-emerald-600 font-bold hover:underline flex items-center gap-1"
                     >
                       <RotateCcw size={11} /> Retake
@@ -517,28 +674,38 @@ export default function SubmitCollection() {
             ) : (
               /* Empty State & Upload Triggers */
               <div className="grid grid-cols-2 gap-2">
+                {/* CAMERA — uses getUserMedia live stream */}
                 <button
                   type="button"
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="p-3 border border-dashed border-emerald-300 dark:border-emerald-700/60 rounded-2xl bg-emerald-50/40 dark:bg-emerald-950/20 hover:bg-emerald-100/50 flex flex-col items-center justify-center gap-1.5 text-emerald-800 dark:text-emerald-300 transition-all active:scale-95"
+                  onClick={openCamera}
+                  disabled={cameraBusy}
+                  className="p-3 border border-dashed border-emerald-300 dark:border-emerald-700/60 rounded-2xl bg-emerald-50/40 dark:bg-emerald-950/20 hover:bg-emerald-100/50 flex flex-col items-center justify-center gap-1.5 text-emerald-800 dark:text-emerald-300 transition-all active:scale-95 disabled:opacity-60"
                 >
-                  <Camera size={18} />
-                  <span className="font-extrabold text-[11px]">Capture Camera</span>
-                  <span className="text-[9px] text-slate-400">Mobile camera trigger</span>
+                  {cameraBusy ? (
+                    <RefreshCw size={18} className="animate-spin" />
+                  ) : (
+                    <Camera size={18} />
+                  )}
+                  <span className="font-extrabold text-[11px]">
+                    {cameraBusy ? 'Starting…' : 'Capture Camera'}
+                  </span>
+                  <span className="text-[9px] text-slate-400">Live camera preview</span>
                 </button>
 
+                {/* FILE UPLOAD — uses normal file picker */}
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   className="p-3 border border-dashed border-slate-300 dark:border-gray-700 rounded-2xl bg-slate-50/60 dark:bg-gray-800/40 hover:bg-slate-100 flex flex-col items-center justify-center gap-1.5 text-slate-700 dark:text-gray-300 transition-all active:scale-95"
                 >
                   <ImageIcon size={18} />
-                  <span className="font-extrabold text-[11px]">Select from Device</span>
+                  <span className="font-extrabold text-[11px]">Upload Photo</span>
                   <span className="text-[9px] text-slate-400">Gallery or storage</span>
                 </button>
               </div>
             )}
           </div>
+
 
           {/* FEATURE ONE C: Truthful Location Tagging */}
           <div className="space-y-1.5 pt-1 border-t border-slate-100 dark:border-gray-800">
@@ -647,5 +814,140 @@ export default function SubmitCollection() {
       </div>
 
     </div>
+
+    {/* ── Live Camera Modal (getUserMedia) ────────────────────────────────── */}
+    {cameraOpen && (
+      <div
+        className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-sm"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Live Camera Capture"
+      >
+        {/* Header */}
+        <div className="w-full max-w-md flex items-center justify-between px-4 py-3">
+          <div className="flex items-center gap-2 text-white">
+            <Camera size={18} className="text-emerald-400" />
+            <span className="font-extrabold text-sm">Live Camera Capture</span>
+          </div>
+          <button
+            onClick={closeCamera}
+            className="p-2 rounded-full hover:bg-white/10 text-white transition-colors"
+            aria-label="Cancel and close camera"
+          >
+            <X size={20} />
+          </button>
+        </div>
+
+        {/* Camera error state */}
+        {cameraError ? (
+          <div className="w-full max-w-md mx-4 flex flex-col items-center gap-4 p-6">
+            <div className="w-16 h-16 rounded-full bg-rose-900/60 flex items-center justify-center">
+              <VideoOff size={32} className="text-rose-400" />
+            </div>
+            <p className="text-white/90 text-sm font-semibold text-center leading-relaxed max-w-xs">
+              {cameraError}
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={closeCamera}
+                className="px-4 py-2.5 rounded-xl border border-white/20 text-white text-xs font-bold hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => { fileInputRef.current?.click(); closeCamera(); }}
+                className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-500 transition-colors flex items-center gap-1.5"
+              >
+                <ImageIcon size={14} /> Upload Photo Instead
+              </button>
+            </div>
+          </div>
+        ) : capturedFrame ? (
+          /* ── Frame captured — show preview + Use / Retake controls ─────── */
+          <div className="w-full max-w-md flex flex-col items-center gap-4 px-4">
+            <div className="w-full rounded-2xl overflow-hidden border border-white/10 bg-black">
+              <img
+                src={capturedFrame}
+                alt="Captured frame preview"
+                className="w-full object-contain max-h-[60vh]"
+              />
+            </div>
+            <p className="text-white/60 text-xs text-center">Review the photo. Retake or use it.</p>
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={retakePhoto}
+                className="flex-1 py-3 rounded-2xl border border-white/20 text-white text-sm font-bold hover:bg-white/10 transition-colors flex items-center justify-center gap-2"
+              >
+                <RotateCcw size={15} /> Retake
+              </button>
+              <button
+                onClick={usePhoto}
+                disabled={compressing}
+                className="flex-1 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {compressing ? (
+                  <><RefreshCw size={15} className="animate-spin" /> Processing…</>
+                ) : (
+                  <><Check size={15} /> Use Photo</>
+                )}
+              </button>
+            </div>
+          </div>
+        ) : (
+          /* ── Live video viewfinder ──────────────────────────────────────── */
+          <div className="w-full max-w-md flex flex-col items-center gap-4 px-4">
+            <div className="w-full rounded-2xl overflow-hidden border border-white/10 bg-black relative min-h-[240px] flex items-center justify-center">
+              {/* Live video element */}
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full object-cover"
+                style={{ display: cameraReady ? 'block' : 'none' }}
+              />
+              {/* Spinner while stream starts */}
+              {!cameraReady && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+                  <RefreshCw size={32} className="text-emerald-400 animate-spin" />
+                  <p className="text-white/70 text-xs font-medium">Starting camera…</p>
+                </div>
+              )}
+              {/* Viewfinder overlay badge */}
+              {cameraReady && (
+                <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/50 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                  <span className="text-white text-[10px] font-bold uppercase tracking-wider">Live</span>
+                </div>
+              )}
+            </div>
+
+            {/* Hidden canvas for frame capture */}
+            <canvas ref={canvasRef} className="hidden" />
+
+            <p className="text-white/50 text-xs text-center">
+              Point at the bin and press <strong className="text-white/80">Take Photo</strong>.
+            </p>
+
+            <div className="flex gap-3 w-full">
+              <button
+                onClick={closeCamera}
+                className="flex-1 py-3 rounded-2xl border border-white/20 text-white text-sm font-bold hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={takePhoto}
+                disabled={!cameraReady}
+                className="flex-1 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-bold transition-colors flex items-center justify-center gap-2"
+              >
+                <Aperture size={16} /> Take Photo
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+    </>
   );
 }
