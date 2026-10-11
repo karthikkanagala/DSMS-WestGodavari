@@ -79,6 +79,7 @@ export default function Login() {
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
+    if (loading) return;
     setError('');
     setLoading(true);
     try {
@@ -86,24 +87,25 @@ export default function Login() {
       if (user?.role === 'collector') navigate('/collector');
       else navigate('/dashboard');
     } catch (err) {
-      // Fallback redirect
-      navigate('/dashboard');
+      setError(err.message || 'Invalid credentials. Please verify your username and password.');
     } finally {
       setLoading(false);
     }
   };
 
   const handleQuickLogin = async (demo) => {
+    if (loading) return;
     setUsername(demo.u);
     setPassword(demo.p);
     setRole(demo.role);
+    setError('');
     setLoading(true);
     try {
       const user = await login(demo.u, demo.p);
       if (user?.role === 'collector' || demo.role === 'collector') navigate('/collector');
       else navigate('/dashboard');
-    } catch (_) {
-      navigate('/dashboard');
+    } catch (err) {
+      setError(err.message || 'Failed to authenticate demo account.');
     } finally {
       setLoading(false);
     }

@@ -10,9 +10,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import API from '../../api/axios';
 import DataTable from '../../components/ui/DataTable';
 import { fmt, statusBadge } from '../../utils/formatters';
+import { getLocalCollections } from '../../utils/mockStorage';
 import {
   ClipboardList, CheckCircle2, RotateCcw, Building2,
-  ArrowUpRight, MapPin, Scale
+  ArrowUpRight, MapPin, Scale, Camera, ExternalLink, X
 } from 'lucide-react';
 
 const FALLBACK_COLLECTIONS = [
@@ -47,6 +48,7 @@ export default function ManageCollections() {
   const [page, setPage] = useState(1);
   const [pages, setPages] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [previewImage, setPreviewImage] = useState(null);
 
   // Filters
   const [mandals, setMandals] = useState([]);
@@ -97,6 +99,11 @@ export default function ManageCollections() {
 
   const fetchCollections = async () => {
     setLoading(true);
+    const localCols = getLocalCollections().filter(c => {
+      if (!selectedMandal) return true;
+      return c.mandal?.toLowerCase() === selectedMandal.toLowerCase();
+    });
+
     try {
       let url = `/collections?page=${page}&limit=10`;
       if (selectedMandal) url += `&mandal_id=${encodeURIComponent(selectedMandal)}`;
@@ -105,23 +112,23 @@ export default function ManageCollections() {
 
       const res = await API.get(url);
       if (res.data && Array.isArray(res.data.collections)) {
-        setCollections(res.data.collections);
-        setTotal(res.data.total || res.data.collections.length);
+        setCollections([...localCols, ...res.data.collections]);
+        setTotal((res.data.total || res.data.collections.length) + localCols.length);
         setPages(res.data.pages || 1);
       } else {
         const filtered = selectedMandal
           ? FALLBACK_COLLECTIONS.filter(c => c.mandal?.toLowerCase() === selectedMandal.toLowerCase())
           : FALLBACK_COLLECTIONS;
-        setCollections(filtered);
-        setTotal(filtered.length);
+        setCollections([...localCols, ...filtered]);
+        setTotal(filtered.length + localCols.length);
         setPages(1);
       }
     } catch (_) {
       const filtered = selectedMandal
         ? FALLBACK_COLLECTIONS.filter(c => c.mandal?.toLowerCase() === selectedMandal.toLowerCase())
         : FALLBACK_COLLECTIONS;
-      setCollections(filtered);
-      setTotal(filtered.length);
+      setCollections([...localCols, ...filtered]);
+      setTotal(filtered.length + localCols.length);
       setPages(1);
     }
     setLoading(false);
@@ -140,7 +147,34 @@ export default function ManageCollections() {
     {
       header: 'Bin Reference',
       accessor: 'bin_ref',
-      cell: (r) => <span className="font-mono font-bold text-emerald-600">{r.bin_ref || r.bin_id?.bin_id || 'BIN-001'}</span>,
+      cell: (r) => (
+        <span className="font-mono font-bold text-emerald-600 flex items-center gap-1.5 flex-wrap">
+          {r.bin_ref || r.bin_id?.bin_id || 'BIN-001'}
+          {r.is_local && (
+            <span className="bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 text-[9px] font-bold px-1.5 py-0.2 rounded border border-amber-300">
+              Demo
+            </span>
+          )}
+        </span>
+      ),
+    },
+    {
+      header: 'Photo Proof',
+      cell: (r) =>
+        r.image_url ? (
+          <div
+            onClick={() => setPreviewImage(r.image_url)}
+            className="w-9 h-9 rounded-xl overflow-hidden border border-slate-200 dark:border-gray-700 cursor-pointer hover:opacity-85 transition-opacity bg-black/10 relative group"
+            title="Click to view full photo"
+          >
+            <img src={r.image_url} alt="Proof" className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white">
+              <Camera size={12} />
+            </div>
+          </div>
+        ) : (
+          <span className="text-slate-400 text-xs">—</span>
+        ),
     },
     {
       header: 'Jurisdiction Mandal',
@@ -151,6 +185,26 @@ export default function ManageCollections() {
         >
           <Building2 size={12} /> {r.mandal || r.ward_id?.mandal_id?.name || selectedMandal || 'West Godavari'}
         </button>
+      ),
+    },
+    {
+      header: 'Location & GPS',
+      cell: (r) => (
+        <div className="text-xs space-y-0.5">
+          <p className="text-slate-700 dark:text-gray-300 truncate max-w-[140px]">{r.location || 'Bin Site'}</p>
+          {r.latitude && r.longitude ? (
+            <a
+              href={`https://www.openstreetmap.org/?mlat=${r.latitude}&mlon=${r.longitude}#map=16/${r.latitude}/${r.longitude}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[10px] text-emerald-600 hover:underline flex items-center gap-0.5 font-bold font-mono"
+            >
+              OSM Pin ({Number(r.latitude).toFixed(3)}, {Number(r.longitude).toFixed(3)}) <ExternalLink size={9} />
+            </a>
+          ) : (
+            <span className="text-[10px] text-slate-400">Stationary Site</span>
+          )}
+        </div>
       ),
     },
     {
@@ -287,6 +341,34 @@ export default function ManageCollections() {
         onPageChange={(p) => setPage(p)}
         loading={loading}
       />
+
+      {/* Photo Lightbox Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-900 rounded-3xl p-4 max-w-lg w-full shadow-2xl relative space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-gray-800">
+              <span className="font-bold text-xs text-slate-800 dark:text-white flex items-center gap-1.5">
+                <Camera size={14} className="text-emerald-600" /> Collection Verification Photo Proof
+              </span>
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="p-1 rounded-xl hover:bg-slate-100 dark:hover:bg-gray-800 text-slate-500"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="rounded-2xl overflow-hidden bg-black/5 max-h-[70vh] flex items-center justify-center">
+              <img src={previewImage} alt="Verification Photo" className="w-full h-auto max-h-[70vh] object-contain" />
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

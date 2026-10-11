@@ -1,18 +1,22 @@
 /**
- * AuthContext — stores current user and token, provides login/logout.
- * Supports both live Flask backend JWT and instant resilient mock fallback for all roles:
+ * AuthContext — stores current user and token, provides instant demo authentication.
+ * Optimized for static prototype performance: demo accounts authenticate in <10ms.
+ * 
+ * Supported Demo Roles & Credentials (Password: Admin@123):
  * - distadmin (District Administrator)
  * - admin / sysadmin (System Administrator)
- * - mandal_tpg / mandal_officer1 / mandal_officer (Mandal Officer)
- * - supervisor1 / supervisor (Sanitation Supervisor)
- * - collector1 / collector (Field Waste Collector)
+ * - mandal_tpg / mandal_officer / mandal_officer1 (Mandal Officer)
+ * - supervisor / supervisor1 (Sanitation Supervisor)
+ * - collector / collector1 (Field Waste Collector)
  */
 import { createContext, useContext, useState, useEffect } from 'react';
 import API from '../api/axios';
 
 const AuthContext = createContext(null);
 
-const MOCK_USERS_MAP = {
+export const DEMO_PASSWORD = 'Admin@123';
+
+export const MOCK_USERS_MAP = {
   distadmin: {
     _id: 'u_distadmin',
     username: 'distadmin',
@@ -112,24 +116,57 @@ export function AuthProvider({ children }) {
   const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Restore session from localStorage on mount
+  // Restore session from localStorage on mount safely
   useEffect(() => {
-    const savedToken = localStorage.getItem('dsms_token');
-    const savedUser  = localStorage.getItem('dsms_user');
-    if (savedToken && savedUser) {
-      try {
-        setToken(savedToken);
-        setUser(JSON.parse(savedUser));
-      } catch (_) {}
+    try {
+      const savedToken = localStorage.getItem('dsms_token');
+      const savedUser  = localStorage.getItem('dsms_user');
+      if (savedToken && savedUser) {
+        const parsed = JSON.parse(savedUser);
+        if (parsed && parsed.role && parsed.username) {
+          setToken(savedToken);
+          setUser(parsed);
+        } else {
+          localStorage.removeItem('dsms_token');
+          localStorage.removeItem('dsms_user');
+        }
+      }
+    } catch (_) {
+      localStorage.removeItem('dsms_token');
+      localStorage.removeItem('dsms_user');
     }
     setLoading(false);
   }, []);
 
   const login = async (username, password) => {
-    const normalizedUser = (username || '').trim().toLowerCase();
-    
+    const rawUser = (username || '').trim();
+    const rawPass = (password || '').trim();
+    const normalizedUser = rawUser.toLowerCase();
+
+    if (!rawUser || !rawPass) {
+      throw new Error('Please enter both username and password.');
+    }
+
+    // 1. Fast local verification for demo accounts (sub-millisecond execution)
+    const mockUser = MOCK_USERS_MAP[normalizedUser];
+    if (mockUser) {
+      if (rawPass !== DEMO_PASSWORD) {
+        throw new Error('Invalid password. For demo accounts, the password is Admin@123.');
+      }
+
+      const mockToken = `mock_token_${Date.now()}`;
+      try {
+        localStorage.setItem('dsms_token', mockToken);
+        localStorage.setItem('dsms_user', JSON.stringify(mockUser));
+      } catch (_) {}
+      setToken(mockToken);
+      setUser(mockUser);
+      return mockUser;
+    }
+
+    // 2. Fallback to API if a custom server account is specified
     try {
-      const res = await API.post('/auth/login', { username, password });
+      const res = await API.post('/auth/login', { username: rawUser, password: rawPass });
       const { token: t, user: u } = res.data;
       localStorage.setItem('dsms_token', t);
       localStorage.setItem('dsms_user', JSON.stringify(u));
@@ -137,23 +174,8 @@ export function AuthProvider({ children }) {
       setUser(u);
       return u;
     } catch (err) {
-      // Resilient fallback for demo users if backend user is missing or in mock mode
-      const mockUser = MOCK_USERS_MAP[normalizedUser] || {
-        _id: `u_${normalizedUser}`,
-        username: normalizedUser,
-        full_name: normalizedUser.toUpperCase(),
-        role: normalizedUser.includes('admin') ? 'district_admin' : normalizedUser.includes('mandal') ? 'mandal_officer' : normalizedUser.includes('collector') ? 'collector' : 'supervisor',
-        district: 'West Godavari',
-        mandal: 'Tadepalligudem',
-        status: 'active',
-      };
-
-      const fallbackToken = `mock_token_${Date.now()}`;
-      localStorage.setItem('dsms_token', fallbackToken);
-      localStorage.setItem('dsms_user', JSON.stringify(mockUser));
-      setToken(fallbackToken);
-      setUser(mockUser);
-      return mockUser;
+      const msg = err.response?.data?.error || 'Invalid credentials. Please verify your username and password.';
+      throw new Error(msg);
     }
   };
 

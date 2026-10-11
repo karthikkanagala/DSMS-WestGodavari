@@ -12,10 +12,11 @@ import { useNavigate } from 'react-router-dom';
 import API from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
 import { fmt, statusBadge } from '../../utils/formatters';
+import { getLocalCollections, getLocalOverflows } from '../../utils/mockStorage';
 import {
   Trash2, PlusCircle, AlertTriangle, CheckCircle2,
   MapPin, Clock, BarChart2, TrendingUp, ShieldCheck,
-  Truck, ArrowUpRight, Scale, Check, Navigation
+  Truck, ArrowUpRight, Scale, Check, Navigation, Camera, ExternalLink, X
 } from 'lucide-react';
 
 const FALLBACK_BINS = [
@@ -31,33 +32,40 @@ export default function CollectorDashboard() {
   const { user } = useAuth();
   const [todayCollections, setTodayCollections] = useState([]);
   const [overflows, setOverflows] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
 
   useEffect(() => {
     fetchCollectorData();
   }, []);
 
   const fetchCollectorData = async () => {
+    const localCols = getLocalCollections();
+    const localOvers = getLocalOverflows().filter(o => !o.resolved);
+
     try {
       const [cRes, oRes] = await Promise.all([
         API.get('/collections'),
         API.get('/overflow?status=open'),
       ]);
-      setTodayCollections(cRes.data?.data || cRes.data?.collections || [
+      const apiCols = cRes.data?.data || cRes.data?.collections || [];
+      const apiOvers = oRes.data?.data || [];
+
+      setTodayCollections([...localCols, ...(apiCols.length ? apiCols : [
         { _id: 'c1', bin_ref: 'BIN-0001', waste_kg: 92.5, status: 'completed', timestamp: new Date(Date.now() - 30 * 60000).toISOString(), remarks: 'Route 1 Cleared' },
         { _id: 'c2', bin_ref: 'BIN-0003', waste_kg: 54.0, status: 'completed', timestamp: new Date(Date.now() - 90 * 60000).toISOString(), remarks: 'School center cleared' },
-      ]);
-      setOverflows(oRes.data?.data || [
+      ])]);
+      setOverflows([...localOvers, ...(apiOvers.length ? apiOvers : [
         { _id: 'o1', bin_ref: 'BIN-0002', location: 'Bus Stand Junction, Tadepalligudem', detected_at: new Date(Date.now() - 20 * 60000).toISOString() },
-      ]);
+      ])]);
     } catch (_) {
-      setTodayCollections([
+      setTodayCollections([...localCols, [
         { _id: 'c1', bin_ref: 'BIN-0001', waste_kg: 92.5, status: 'completed', timestamp: new Date(Date.now() - 30 * 60000).toISOString(), remarks: 'Route 1 Cleared' },
         { _id: 'c2', bin_ref: 'BIN-0003', waste_kg: 54.0, status: 'completed', timestamp: new Date(Date.now() - 90 * 60000).toISOString(), remarks: 'School center cleared' },
-      ]);
-      setOverflows([
+      ]]);
+      setOverflows([...localOvers, [
         { _id: 'o1', bin_ref: 'BIN-0002', location: 'Bus Stand Junction, Tadepalligudem', detected_at: new Date(Date.now() - 20 * 60000).toISOString() },
-      ]);
+      ]]);
     }
     setLoading(false);
   };
@@ -106,14 +114,23 @@ export default function CollectorDashboard() {
         </div>
       </div>
 
-      {/* Primary Action Button: Update Collection */}
-      <button
-        onClick={() => navigate('/collector/submit')}
-        className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] text-white rounded-2xl py-4 font-black text-sm flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-600/25 transition-all"
-      >
-        <PlusCircle size={20} className="text-white" />
-        <span>Update Public Bin Collection</span>
-      </button>
+      {/* Primary Action Buttons: Routine Update & Report Overflow */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <button
+          onClick={() => navigate('/collector/submit')}
+          className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 active:scale-[0.99] text-white rounded-2xl py-3.5 px-4 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all"
+        >
+          <PlusCircle size={18} className="text-white" />
+          <span>Update Collection</span>
+        </button>
+        <button
+          onClick={() => navigate('/collector/submit?mode=overflow')}
+          className="w-full bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 active:scale-[0.99] text-white rounded-2xl py-3.5 px-4 font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 transition-all"
+        >
+          <Camera size={18} className="text-white" />
+          <span>Report Bin Overflow</span>
+        </button>
+      </div>
 
       {/* Urgent Overflow Alert Dispatch Banner */}
       {overflows.length > 0 && (
@@ -204,28 +221,93 @@ export default function CollectorDashboard() {
           </div>
         ) : (
           <div className="space-y-2 text-xs">
-            {todayCollections.slice(0, 5).map((c) => (
-              <div
-                key={c._id}
-                className="p-3 bg-slate-50 dark:bg-gray-800/60 rounded-2xl border border-slate-100 dark:border-gray-800 flex items-center justify-between gap-3"
-              >
-                <div>
-                  <p className="font-bold text-slate-800 dark:text-gray-200 font-mono text-emerald-700 dark:text-emerald-400">
-                    {c.bin_ref}
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-0.5">
-                    {fmt.time(c.timestamp)} • {c.remarks || 'Collected'}
-                  </p>
+            {todayCollections.slice(0, 6).map((c) => {
+              const hasPhoto = Boolean(c.image_url);
+              return (
+                <div
+                  key={c._id || c.id}
+                  className="p-3 bg-slate-50 dark:bg-gray-800/60 rounded-2xl border border-slate-100 dark:border-gray-800 flex items-start justify-between gap-3"
+                >
+                  <div className="flex items-start gap-3 min-w-0">
+                    {hasPhoto && (
+                      <div
+                        onClick={() => setPreviewImage(c.image_url)}
+                        className="w-11 h-11 rounded-xl overflow-hidden border border-slate-200 dark:border-gray-700 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity bg-black/10 relative group"
+                        title="Click to view full photo"
+                      >
+                        <img src={c.image_url} alt="Collection Bin" className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white">
+                          <Camera size={13} />
+                        </div>
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <p className="font-bold text-slate-800 dark:text-gray-200 font-mono text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5 flex-wrap">
+                        <span>{c.bin_ref || 'BIN-001'}</span>
+                        {c.is_local && (
+                          <span className="bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 text-[9px] font-bold px-1.5 py-0.2 rounded border border-amber-300">
+                            Local Demo
+                          </span>
+                        )}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">
+                        {fmt.time(c.timestamp)} • {c.remarks || 'Collected'}
+                      </p>
+                      {c.latitude && c.longitude && (
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <span className="text-[10px] text-slate-500 font-mono">
+                            {Number(c.latitude).toFixed(4)}, {Number(c.longitude).toFixed(4)}
+                          </span>
+                          <a
+                            href={`https://www.openstreetmap.org/?mlat=${c.latitude}&mlon=${c.longitude}#map=16/${c.latitude}/${c.longitude}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-[10px] text-emerald-600 hover:underline flex items-center gap-0.5 font-bold"
+                          >
+                            OSM <ExternalLink size={9} />
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="text-right flex-shrink-0">
+                    <p className="font-black text-slate-900 dark:text-white">{c.waste_kg} kg</p>
+                    <span className={statusBadge(c.status)}>{c.status}</span>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-black text-slate-900 dark:text-white">{c.waste_kg} kg</p>
-                  <span className={statusBadge(c.status)}>{c.status}</span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
+
+      {/* Photo Lightbox Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-900 rounded-3xl p-4 max-w-lg w-full shadow-2xl relative space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-gray-800">
+              <span className="font-bold text-xs text-slate-800 dark:text-white flex items-center gap-1.5">
+                <Camera size={14} className="text-emerald-600" /> Bin Photo Record
+              </span>
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="p-1 rounded-xl hover:bg-slate-100 dark:hover:bg-gray-800 text-slate-500"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="rounded-2xl overflow-hidden bg-black/5 max-h-[70vh] flex items-center justify-center">
+              <img src={previewImage} alt="Collection Record" className="w-full h-auto max-h-[70vh] object-contain" />
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

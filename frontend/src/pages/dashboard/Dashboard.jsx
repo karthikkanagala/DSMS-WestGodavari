@@ -273,7 +273,7 @@ export default function Dashboard() {
   const [activeFilterData, setActiveFilterData] = useState(null);
   const [mapCenter, setMapCenter] = useState([16.72, 81.45]);
   const [showVideoModal, setShowVideoModal] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date());
 
   const mandalParam = searchParams.get('mandal');

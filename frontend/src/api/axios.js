@@ -1,12 +1,13 @@
 /**
  * Axios instance with base URL and JWT interceptor.
- * All API calls go through this instance.
+ * For static prototype, timeout is kept low (2500ms) so failure
+ * to reach offline/remote endpoints falls back immediately to mock data.
  */
 import axios from 'axios';
 
 const API = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000/api',
-  timeout: 30000,
+  timeout: 2500,
 });
 
 // Attach JWT token to every request

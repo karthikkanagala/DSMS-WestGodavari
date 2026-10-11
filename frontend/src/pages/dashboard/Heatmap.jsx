@@ -1,41 +1,41 @@
 /**
  * Multi-Engine GIS Sanitation Command Center:
- * - 4 High-Resolution Cartographic Basemaps: Street OSM, CartoDB Voyager, Dark Matter, ESRI Satellite HD
+ * - 100% Free & Open Cartographic Basemaps (OpenStreetMap Standard, Humanitarian, Topo)
+ * - Zero API Keys or Paid Dependencies required
  * - Dynamic Layer Toggles: Heat Density Polygons, IoT Bin Sensor Markers, and Live Sanitation Fleet GPS Tracker
+ * - Graceful Tile Error & Offline Recovery
+ * - Automatic Container Resizing & Invalidation to prevent grey tile bugs
  * - Real GPS coordinate telemetry overlay for West Godavari District
- * - Interactive polygon and marker click handlers for automatic navigation
  */
 import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, Polygon, Popup, CircleMarker, Polyline, Tooltip, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, Polygon, Popup, CircleMarker, Tooltip, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { heatmapColor } from '../../utils/constants';
-import { Layers, Map as MapIcon, Globe, Moon, Shield, Radio, Truck, AlertTriangle, Navigation, Eye } from 'lucide-react';
+import { Layers, Map as MapIcon, Globe, Moon, Radio, Truck, AlertTriangle, Eye, ShieldCheck, Check } from 'lucide-react';
 
-// Tile provider presets
+// Free, open-source tile providers with zero API key requirement
 const BASEMAP_PRESETS = {
   street: {
-    name: 'Street GIS',
+    name: 'OpenStreetMap',
     url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    attribution: '&copy; OpenStreetMap contributors',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors',
+    maxZoom: 19,
   },
-  voyager: {
-    name: 'Vector Light',
-    url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; CartoDB Voyager',
+  humanitarian: {
+    name: 'OSM Humanitarian',
+    url: 'https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png',
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors, Tiles style by Humanitarian OpenStreetMap Team',
+    maxZoom: 19,
   },
-  dark: {
-    name: 'Dark Command',
-    url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    attribution: '&copy; CartoDB Dark Matter',
-  },
-  satellite: {
-    name: 'Satellite HD',
-    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    attribution: '&copy; Esri World Imagery',
+  topo: {
+    name: 'Topography',
+    url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+    attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, SRTM | Map style: &copy; OpenTopoMap',
+    maxZoom: 17,
   },
 };
 
-// Real West Godavari IoT Bin Sensor Locations
+// Real West Godavari IoT Bin Sensor Locations with truthful geographic coordinates
 const IOT_BIN_LOCATIONS = [
   { id: 'BIN-001', name: 'Tadepalligudem Market Road', lat: 16.8140, lng: 81.5290, fill: 92, status: 'High', waste: 92, cap: 100 },
   { id: 'BIN-002', name: 'Tadepalligudem Bus Stand', lat: 16.8185, lng: 81.5320, fill: 100, status: 'Overflow', waste: 120, cap: 120 },
@@ -56,27 +56,61 @@ const FLEET_VEHICLES = [
   { id: 'WG-08-DT', driver: 'S. Satyanarayana', lat: 16.7580, lng: 81.6850, route: 'Tanuku Bypass Route #3', speed: '18 km/h', status: 'Active', color: '#f59e0b' },
 ];
 
-// Helper component to center map dynamically
-function RecenterMap({ center }) {
+// Robust map controller for auto-centering, resizing, and invalidation
+function MapController({ center }) {
   const map = useMap();
+
   useEffect(() => {
-    if (center) map.setView(center, map.getZoom());
+    // Invalidate map size after mount and after layout shifts
+    const timer = setTimeout(() => {
+      try {
+        map.invalidateSize();
+      } catch (_) {}
+    }, 200);
+
+    const handleResize = () => {
+      try {
+        map.invalidateSize();
+      } catch (_) {}
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [map]);
+
+  useEffect(() => {
+    if (center && Array.isArray(center) && center.length === 2 && !isNaN(center[0]) && !isNaN(center[1])) {
+      try {
+        map.setView(center, map.getZoom());
+      } catch (_) {}
+    }
   }, [center, map]);
+
   return null;
 }
 
 export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
-  // Center around West Godavari district (approx 16.72° N, 81.45° E)
   const defaultCenter = [16.72, 81.45];
   const activeCenter = mapCenter || defaultCenter;
-  const [basemap, setBasemap] = useState('voyager');
+
+  // Defaults to OpenStreetMap standard (100% free, zero API key)
+  const [basemap, setBasemap] = useState('street');
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showBins, setShowBins] = useState(true);
   const [showFleet, setShowFleet] = useState(true);
+  const [tileError, setTileError] = useState(false);
+
+  // Filter located vs unlocated bins
+  const locatedBins = IOT_BIN_LOCATIONS.filter(
+    (b) => typeof b.lat === 'number' && typeof b.lng === 'number' && !isNaN(b.lat) && !isNaN(b.lng)
+  );
 
   // Generate synthetic Voronoi/polygon bounds around centroids for realistic interactive heatmap
   const getWardPolygon = (idx, total) => {
-    const angleStep = (2 * Math.PI) / total;
+    const angleStep = (2 * Math.PI) / (total || 1);
     const baseLat = 16.72 + 0.32 * Math.sin(idx * angleStep);
     const baseLng = 81.45 + 0.38 * Math.cos(idx * angleStep);
     const r = 0.045;
@@ -88,6 +122,8 @@ export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
       [baseLat - r, baseLng - r],
     ];
   };
+
+  const currentPreset = BASEMAP_PRESETS[basemap] || BASEMAP_PRESETS.street;
 
   return (
     <div className="bg-white dark:bg-gray-900 rounded-2xl border border-slate-100 dark:border-gray-800 overflow-hidden shadow-[0_2px_12px_-2px_rgba(0,0,0,0.04)]">
@@ -102,7 +138,7 @@ export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
             </h3>
           </div>
           <p className="text-[11px] text-slate-400 font-medium mt-0.5">
-            West Godavari District • Real-Time Waste Bins, Sanitation Vehicles &amp; Collection Routes
+            OpenStreetMap Standard GIS • Real-Time IoT Bins, GPS Fleet Tracking &amp; Ward Zones
           </p>
         </div>
 
@@ -111,36 +147,28 @@ export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
           {/* Basemap Engine Selector */}
           <div className="flex items-center p-1 bg-slate-100 dark:bg-gray-800 rounded-xl text-xs">
             <button
-              onClick={() => setBasemap('voyager')}
-              className={`px-2.5 py-1 rounded-lg font-bold transition-all text-[11px] flex items-center gap-1 ${
-                basemap === 'voyager' ? 'bg-white dark:bg-gray-700 text-emerald-700 dark:text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:text-gray-400'
-              }`}
-            >
-              <MapIcon size={12} /> Vector
-            </button>
-            <button
-              onClick={() => setBasemap('satellite')}
-              className={`px-2.5 py-1 rounded-lg font-bold transition-all text-[11px] flex items-center gap-1 ${
-                basemap === 'satellite' ? 'bg-white dark:bg-gray-700 text-emerald-700 dark:text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:text-gray-400'
-              }`}
-            >
-              <Globe size={12} /> Satellite HD
-            </button>
-            <button
-              onClick={() => setBasemap('dark')}
-              className={`px-2.5 py-1 rounded-lg font-bold transition-all text-[11px] flex items-center gap-1 ${
-                basemap === 'dark' ? 'bg-white dark:bg-gray-700 text-emerald-700 dark:text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:text-gray-400'
-              }`}
-            >
-              <Moon size={12} /> Dark
-            </button>
-            <button
-              onClick={() => setBasemap('street')}
+              onClick={() => { setBasemap('street'); setTileError(false); }}
               className={`px-2.5 py-1 rounded-lg font-bold transition-all text-[11px] flex items-center gap-1 ${
                 basemap === 'street' ? 'bg-white dark:bg-gray-700 text-emerald-700 dark:text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:text-gray-400'
               }`}
             >
-              <Layers size={12} /> Street
+              <MapIcon size={12} /> Standard
+            </button>
+            <button
+              onClick={() => { setBasemap('humanitarian'); setTileError(false); }}
+              className={`px-2.5 py-1 rounded-lg font-bold transition-all text-[11px] flex items-center gap-1 ${
+                basemap === 'humanitarian' ? 'bg-white dark:bg-gray-700 text-emerald-700 dark:text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:text-gray-400'
+              }`}
+            >
+              <Globe size={12} /> Humanitarian
+            </button>
+            <button
+              onClick={() => { setBasemap('topo'); setTileError(false); }}
+              className={`px-2.5 py-1 rounded-lg font-bold transition-all text-[11px] flex items-center gap-1 ${
+                basemap === 'topo' ? 'bg-white dark:bg-gray-700 text-emerald-700 dark:text-emerald-400 shadow-sm' : 'text-slate-500 hover:text-slate-800 dark:text-gray-400'
+              }`}
+            >
+              <Layers size={12} /> Topo
             </button>
           </div>
 
@@ -179,6 +207,18 @@ export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
 
       {/* Main Leaflet GIS Map Canvas */}
       <div className="h-[430px] w-full relative">
+        {tileError && (
+          <div className="absolute top-3 left-4 right-4 z-[500] bg-amber-50 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 text-xs px-3.5 py-2 rounded-xl flex items-center justify-between shadow-md">
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={15} className="text-amber-600 flex-shrink-0" />
+              <span>Map tile service is currently offline or unreachable. Telemetry markers and dashboard data remain fully operational.</span>
+            </div>
+            <button onClick={() => setTileError(false)} className="text-[11px] font-bold underline ml-2">
+              Dismiss
+            </button>
+          </div>
+        )}
+
         <MapContainer
           center={defaultCenter}
           zoom={10}
@@ -187,10 +227,14 @@ export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
         >
           <TileLayer
             key={basemap}
-            attribution={BASEMAP_PRESETS[basemap].attribution}
-            url={BASEMAP_PRESETS[basemap].url}
+            attribution={currentPreset.attribution}
+            url={currentPreset.url}
+            maxZoom={currentPreset.maxZoom}
+            eventHandlers={{
+              tileerror: () => setTileError(true),
+            }}
           />
-          <RecenterMap center={activeCenter} />
+          <MapController center={activeCenter} />
 
           {/* Layer 1: Waste Heat Density Polygons */}
           {showHeatmap && wardsData.map((ward, idx) => {
@@ -203,7 +247,7 @@ export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
                 positions={polygonCoords}
                 pathOptions={{
                   fillColor: color,
-                  fillOpacity: basemap === 'satellite' ? 0.45 : 0.60,
+                  fillOpacity: 0.55,
                   weight: 1.5,
                   color: '#ffffff',
                 }}
@@ -230,7 +274,7 @@ export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
           })}
 
           {/* Layer 2: Live IoT Bin Sensors */}
-          {showBins && IOT_BIN_LOCATIONS.map((bin) => (
+          {showBins && locatedBins.map((bin) => (
             <CircleMarker
               key={bin.id}
               center={[bin.lat, bin.lng]}
@@ -253,6 +297,7 @@ export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
                   <p className="font-bold text-slate-900">{bin.id} — {bin.name}</p>
                   <p className="text-slate-600">Sensor Fill Level: <strong className={bin.fill >= 100 ? 'text-rose-600' : 'text-amber-600'}>{bin.fill}%</strong></p>
                   <p className="text-slate-600">Current Waste: <strong>{bin.waste} / {bin.cap} kg</strong></p>
+                  <p className="text-[10px] text-slate-400 font-mono">GPS: {bin.lat.toFixed(4)}° N, {bin.lng.toFixed(4)}° E</p>
                   <span className={`badge ${bin.status === 'Overflow' ? 'badge-red' : 'badge-orange'}`}>{bin.status}</span>
                 </div>
               </Popup>
@@ -295,12 +340,12 @@ export default function Heatmap({ wardsData = [], onWardClick, mapCenter }) {
         <div className="absolute bottom-3 left-3 z-[400] bg-slate-900/85 backdrop-blur-md text-white px-3.5 py-2 rounded-xl text-[11px] font-medium flex items-center gap-3 shadow-lg border border-slate-800">
           <div className="flex items-center gap-1.5 text-emerald-400">
             <Radio size={13} className="animate-pulse" />
-            <span className="font-bold">GPS: 16.7240° N, 81.4520° E</span>
+            <span className="font-bold">District Center: 16.7240° N, 81.4520° E</span>
           </div>
           <span className="text-slate-500">•</span>
           <span className="text-slate-300">West Godavari Command Center</span>
           <span className="text-slate-500">•</span>
-          <span className="text-emerald-300 font-bold">10 Public Bins Monitored</span>
+          <span className="text-emerald-300 font-bold">{locatedBins.length} Monitored Bins</span>
         </div>
 
         {/* Heatmap Density Legend (Bottom Right Overlay) */}

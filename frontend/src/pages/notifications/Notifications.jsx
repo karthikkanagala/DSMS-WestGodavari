@@ -9,9 +9,10 @@ import { useNavigate } from 'react-router-dom';
 import API from '../../api/axios';
 import { fmt } from '../../utils/formatters';
 import { usePolling } from '../../hooks/usePolling';
+import { getLocalOverflows, resolveLocalOverflow } from '../../utils/mockStorage';
 import {
   Bell, AlertTriangle, CheckCircle2, Activity, Check,
-  Building2, ArrowUpRight, ShieldCheck, MapPin
+  Building2, ArrowUpRight, ShieldCheck, MapPin, Camera, ExternalLink, X
 } from 'lucide-react';
 
 const FALLBACK_OVERFLOWS = [
@@ -38,14 +39,21 @@ const FALLBACK_ACTIVITY = [
 export default function Notifications() {
   const navigate = useNavigate();
   const [data, setData] = useState(null);
+  const [localOverflows, setLocalOverflows] = useState([]);
   const [resolvedIds, setResolvedIds] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
+
+  useEffect(() => {
+    setLocalOverflows(getLocalOverflows());
+  }, []);
 
   const fetchNotifications = async () => {
     try {
       const res = await API.get('/notifications');
       setData(res.data);
     } catch (_) {}
+    setLocalOverflows(getLocalOverflows());
     setLoading(false);
   };
 
@@ -54,18 +62,23 @@ export default function Notifications() {
   const handleResolveOverflow = async (id) => {
     try {
       await API.put(`/overflow/${id}/resolve`);
-      setResolvedIds(prev => [...prev, id]);
-      fetchNotifications();
-    } catch (_) {
-      setResolvedIds(prev => [...prev, id]);
-    }
+    } catch (_) {}
+    resolveLocalOverflow(id);
+    setResolvedIds(prev => [...prev, id]);
+    setLocalOverflows(getLocalOverflows());
   };
 
   const rawOverflows = data?.overflow || [];
   const rawActivity = data?.activity || [];
 
-  const overflowList = (rawOverflows.length > 0 ? rawOverflows : FALLBACK_OVERFLOWS).filter(
-    o => !resolvedIds.includes(o._id)
+  // Merge locally stored overflow reports with server or fallback data
+  const combinedOverflows = [
+    ...localOverflows.filter(o => !o.resolved),
+    ...(rawOverflows.length > 0 ? rawOverflows : FALLBACK_OVERFLOWS)
+  ];
+
+  const overflowList = combinedOverflows.filter(
+    o => !resolvedIds.includes(o._id) && !resolvedIds.includes(o.id)
   );
   const activityList = rawActivity.length > 0 ? rawActivity : FALLBACK_ACTIVITY;
 
@@ -84,11 +97,17 @@ export default function Notifications() {
             <Bell size={22} className="text-emerald-600" /> Notifications &amp; Operational Activity Stream
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Live 30-second polling updates for bin overflow alerts, supervisor verifications, and system audit logs.
+            Live updates for bin overflow alerts, supervisor verifications, and system audit logs.
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center flex-wrap gap-2.5">
+          <button
+            onClick={() => navigate('/collector/submit?mode=overflow')}
+            className="btn-danger text-xs py-2 px-3.5 font-bold flex items-center gap-1.5 shadow-sm"
+          >
+            <AlertTriangle size={14} /> Report Overflow
+          </button>
           <button
             onClick={() => navigate('/admin/mandals')}
             className="btn-secondary text-xs py-2 px-3 border-emerald-300 text-emerald-700 dark:text-emerald-400 font-bold flex items-center gap-1.5"
@@ -121,30 +140,73 @@ export default function Notifications() {
                 <p className="text-xs font-bold text-emerald-700 dark:text-emerald-400">All public bins cleared! Zero open overflow alerts.</p>
               </div>
             ) : (
-              overflowList.map((o) => (
-                <div
-                  key={o._id}
-                  className="p-3 bg-rose-50/70 dark:bg-rose-950/20 rounded-2xl border border-rose-100 dark:border-rose-900/30 flex items-center justify-between gap-3 text-xs"
-                >
-                  <div className="min-w-0">
-                    <p className="font-extrabold text-rose-800 dark:text-rose-300 flex items-center gap-1.5">
-                      <span className="font-mono text-emerald-700 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded text-[10px]">
-                        {o.bin_ref || o.bin_id?.bin_id}
-                      </span>
-                      <span>{o.location || 'Public Bin Location'}</span>
-                    </p>
-                    <p className="text-[11px] text-slate-500 dark:text-gray-400 mt-0.5">
-                      Mandal: <strong>{o.mandal || o.ward_id?.mandal_id?.name || 'West Godavari'}</strong> • Detected: {fmt.datetime(o.detected_at)}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => handleResolveOverflow(o._id)}
-                    className="btn-success text-xs py-1.5 px-3 whitespace-nowrap font-bold flex items-center gap-1 shadow-sm"
+              overflowList.map((o) => {
+                const alertId = o._id || o.id;
+                const hasPhoto = Boolean(o.image_url);
+                return (
+                  <div
+                    key={alertId}
+                    className="p-3 bg-rose-50/70 dark:bg-rose-950/20 rounded-2xl border border-rose-100 dark:border-rose-900/30 flex items-start justify-between gap-3 text-xs"
                   >
-                    <Check size={13} /> Resolve
-                  </button>
-                </div>
-              ))
+                    <div className="flex items-start gap-3 min-w-0">
+                      {hasPhoto && (
+                        <div
+                          onClick={() => setPreviewImage(o.image_url)}
+                          className="w-12 h-12 rounded-xl overflow-hidden border border-rose-200 dark:border-rose-800 flex-shrink-0 cursor-pointer hover:opacity-80 transition-opacity bg-black/10 relative group"
+                          title="Click to view full photo"
+                        >
+                          <img src={o.image_url} alt="Overflow Bin" className="w-full h-full object-cover" />
+                          <div className="absolute inset-0 bg-black/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white">
+                            <Camera size={14} />
+                          </div>
+                        </div>
+                      )}
+                      <div className="min-w-0">
+                        <p className="font-extrabold text-rose-800 dark:text-rose-300 flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono text-emerald-700 bg-emerald-100 dark:bg-emerald-900/40 px-1.5 py-0.5 rounded text-[10px]">
+                            {o.bin_ref || o.bin_id?.bin_id || o.bin_id || 'BIN-ALERT'}
+                          </span>
+                          <span className="truncate">{o.location || 'Public Bin Location'}</span>
+                          {o.is_local && (
+                            <span className="bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 text-[9px] font-bold px-1.5 py-0.2 rounded border border-amber-300">
+                              Local Demo
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-[11px] text-slate-500 dark:text-gray-400 mt-0.5">
+                          Mandal: <strong>{o.mandal || o.ward_id?.mandal_id?.name || 'West Godavari'}</strong> • Detected: {fmt.datetime(o.detected_at || o.timestamp)}
+                        </p>
+                        {o.latitude && o.longitude && (
+                          <div className="mt-1 flex items-center gap-2">
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              GPS: {Number(o.latitude).toFixed(4)}, {Number(o.longitude).toFixed(4)}
+                            </span>
+                            <a
+                              href={`https://www.openstreetmap.org/?mlat=${o.latitude}&mlon=${o.longitude}#map=16/${o.latitude}/${o.longitude}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[10px] text-emerald-600 hover:underline flex items-center gap-0.5 font-bold"
+                            >
+                              OSM Pin <ExternalLink size={10} />
+                            </a>
+                          </div>
+                        )}
+                        {o.remarks && (
+                          <p className="text-[10px] italic text-slate-600 dark:text-slate-300 mt-1">
+                            "{o.remarks}"
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => handleResolveOverflow(alertId)}
+                      className="btn-success text-xs py-1.5 px-3 whitespace-nowrap font-bold flex items-center gap-1 shadow-sm flex-shrink-0"
+                    >
+                      <Check size={13} /> Resolve
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -181,6 +243,34 @@ export default function Notifications() {
         </div>
 
       </div>
+
+      {/* Photo Lightbox Modal */}
+      {previewImage && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div
+            className="bg-white dark:bg-gray-900 rounded-3xl p-4 max-w-lg w-full shadow-2xl relative space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-gray-800">
+              <span className="font-bold text-xs text-slate-800 dark:text-white flex items-center gap-1.5">
+                <Camera size={14} className="text-emerald-600" /> Overflow Evidence Photo
+              </span>
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="p-1 rounded-xl hover:bg-slate-100 dark:hover:bg-gray-800 text-slate-500"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="rounded-2xl overflow-hidden bg-black/5 max-h-[70vh] flex items-center justify-center">
+              <img src={previewImage} alt="Overflow Full" className="w-full h-auto max-h-[70vh] object-contain" />
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
