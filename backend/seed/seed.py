@@ -124,11 +124,13 @@ def run_seed(db):
     # ──────────────────────────────────────────────
     print("Creating users...")
 
-    def make_user(username, full_name, role, password="Admin@123",
+    default_seed_pw = os.environ.get("SEED_USER_PASSWORD", "ChangeMe@123")
+
+    def make_user(username, full_name, role, password=None,
                   district_id=None, mandal_id=None, ward_ids=None, bin_ids=None):
         return {
             "username":      username,
-            "password_hash": _hash(password),
+            "password_hash": _hash(password or default_seed_pw),
             "full_name":     full_name,
             "role":          role,
             "status":        "active",

@@ -246,8 +246,8 @@ def import_users():
     for r in rows:
         username = sanitise_string(r.get("username", ""))
         if not username or mongo.db.users.find_one({"username": username}): continue
-        role = (r.get("role") or "collector").strip().lower()
-        docs.append({"username": username, "password_hash": _hash(r.get("password", "Admin@123")),
+        default_pw = os.environ.get("DEFAULT_USER_PASSWORD", "ChangeMe@123")
+        docs.append({"username": username, "password_hash": _hash(r.get("password", default_pw)),
                      "full_name": sanitise_string(r.get("full_name", username)),
                      "role": role, "status": "active", "district_id": None, "mandal_id": None,
                      "ward_ids": [], "bin_ids": [],

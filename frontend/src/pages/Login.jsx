@@ -21,7 +21,6 @@ const DEMO_ROLES = [
   {
     role: 'district_admin',
     u: 'distadmin',
-    p: 'Admin@123',
     label: 'District Admin',
     desc: 'Full 19 Mandals Command Dashboard',
     icon: Building2,
@@ -30,7 +29,6 @@ const DEMO_ROLES = [
   {
     role: 'system_admin',
     u: 'admin',
-    p: 'Admin@123',
     label: 'System Admin',
     desc: 'DB Backups, Users & Setup Wizard',
     icon: ShieldCheck,
@@ -39,7 +37,6 @@ const DEMO_ROLES = [
   {
     role: 'mandal_officer',
     u: 'mandal_tpg',
-    p: 'Admin@123',
     label: 'Mandal Officer',
     desc: 'Tadepalligudem / Bhimavaram Scope',
     icon: MapPin,
@@ -48,7 +45,6 @@ const DEMO_ROLES = [
   {
     role: 'supervisor',
     u: 'supervisor',
-    p: 'Admin@123',
     label: 'Supervisor',
     desc: 'Verify Collections & Field Audits',
     icon: CheckCircle2,
@@ -57,7 +53,6 @@ const DEMO_ROLES = [
   {
     role: 'collector',
     u: 'collector',
-    p: 'Admin@123',
     label: 'Field Collector',
     desc: 'Mobile Route App & Weight Logger',
     icon: Truck,
@@ -66,11 +61,11 @@ const DEMO_ROLES = [
 ];
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, quickLogin } = useAuth();
   const navigate = useNavigate();
 
   const [username, setUsername] = useState('distadmin');
-  const [password, setPassword] = useState('Admin@123');
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState('district_admin');
   const [showPassword, setShowPassword] = useState(false);
   const [showVideoModal, setShowVideoModal] = useState(false);
@@ -96,12 +91,12 @@ export default function Login() {
   const handleQuickLogin = async (demo) => {
     if (loading) return;
     setUsername(demo.u);
-    setPassword(demo.p);
+    setPassword('');
     setRole(demo.role);
     setError('');
     setLoading(true);
     try {
-      const user = await login(demo.u, demo.p);
+      const user = await quickLogin(demo.u);
       if (user?.role === 'collector' || demo.role === 'collector') navigate('/collector');
       else navigate('/dashboard');
     } catch (err) {
@@ -260,7 +255,7 @@ export default function Login() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    placeholder="Admin@123"
+                    placeholder="••••••••"
                     className="form-input pl-10 pr-10 py-2.5 text-xs font-semibold"
                   />
                   <button

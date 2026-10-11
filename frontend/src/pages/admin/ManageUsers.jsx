@@ -34,7 +34,7 @@ export default function ManageUsers() {
   const [showImportModal, setShowImportModal] = useState(false);
 
   const [form, setForm] = useState({
-    username: '', password: 'Admin@123', full_name: '', role: 'collector'
+    username: '', password: '', full_name: '', role: 'collector'
   });
 
   useEffect(() => {

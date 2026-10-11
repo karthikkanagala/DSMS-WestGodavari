@@ -134,7 +134,7 @@ def import_users():
         username  = sanitise_string(row.get("username") or "")
         full_name = sanitise_string(row.get("full_name") or "")
         role      = (row.get("role") or "").strip().lower()
-        password  = (row.get("password") or "Admin@123")
+        password  = (row.get("password") or os.environ.get("DEFAULT_USER_PASSWORD", "ChangeMe@123"))
 
         if not username:
             row_errors.append(f"Row {i}: username empty"); continue

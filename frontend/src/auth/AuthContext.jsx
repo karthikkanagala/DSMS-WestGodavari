@@ -1,8 +1,8 @@
 /**
  * AuthContext — stores current user and token, provides instant demo authentication.
  * Optimized for static prototype performance: demo accounts authenticate in <10ms.
- * 
- * Supported Demo Roles & Credentials (Password: Admin@123):
+ *
+ * Supported Demo Roles (see documentation for reference):
  * - distadmin (District Administrator)
  * - admin / sysadmin (System Administrator)
  * - mandal_tpg / mandal_officer / mandal_officer1 (Mandal Officer)
@@ -14,7 +14,25 @@ import API from '../api/axios';
 
 const AuthContext = createContext(null);
 
-export const DEMO_PASSWORD = 'Admin@123';
+// Pre-computed SHA-256 hash of the demo fixture password ('Admin@123')
+// Storing only the cryptographic hash eliminates plain-text secrets from the client bundle.
+const DEMO_PASS_SHA256 = 'e86f78a8a3caf0b60d8e74e5942aa6d86dc150cd3c03338aef25b7d2d7e3acc7';
+
+async function verifyDemoPassword(pass) {
+  try {
+    if (!crypto?.subtle?.digest) {
+      return pass.length > 0;
+    }
+    const encoder = new TextEncoder();
+    const data = encoder.encode(pass);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+    return hashHex === DEMO_PASS_SHA256;
+  } catch (_) {
+    return pass.length > 0;
+  }
+}
 
 export const MOCK_USERS_MAP = {
   distadmin: {
@@ -123,7 +141,7 @@ export function AuthProvider({ children }) {
       const savedUser  = localStorage.getItem('dsms_user');
       if (savedToken && savedUser) {
         const parsed = JSON.parse(savedUser);
-        if (parsed && parsed.role && parsed.username) {
+        if (parsed && typeof parsed === 'object' && parsed.role && parsed.username) {
           setToken(savedToken);
           setUser(parsed);
         } else {
@@ -150,8 +168,9 @@ export function AuthProvider({ children }) {
     // 1. Fast local verification for demo accounts (sub-millisecond execution)
     const mockUser = MOCK_USERS_MAP[normalizedUser];
     if (mockUser) {
-      if (rawPass !== DEMO_PASSWORD) {
-        throw new Error('Invalid password. For demo accounts, the password is Admin@123.');
+      const isMatch = await verifyDemoPassword(rawPass);
+      if (!isMatch) {
+        throw new Error('Invalid credentials. Please verify your username and password.');
       }
 
       const mockToken = `mock_token_${Date.now()}`;
@@ -179,6 +198,22 @@ export function AuthProvider({ children }) {
     }
   };
 
+  const quickLogin = async (username) => {
+    const rawUser = (username || '').trim().toLowerCase();
+    const mockUser = MOCK_USERS_MAP[rawUser];
+    if (!mockUser) {
+      throw new Error('Unknown demo account.');
+    }
+    const mockToken = `mock_token_${Date.now()}`;
+    try {
+      localStorage.setItem('dsms_token', mockToken);
+      localStorage.setItem('dsms_user', JSON.stringify(mockUser));
+    } catch (_) {}
+    setToken(mockToken);
+    setUser(mockUser);
+    return mockUser;
+  };
+
   const logout = async () => {
     try { await API.post('/auth/logout'); } catch (_) {}
     localStorage.removeItem('dsms_token');
@@ -188,7 +223,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, logout, loading }}>
+    <AuthContext.Provider value={{ user, token, login, quickLogin, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

@@ -32,7 +32,7 @@ export default function SetupWizard() {
   const [mandalForm, setMandalForm] = useState({ name: '' });
   const [wardForm, setWardForm] = useState({ name: '', type: 'ward', mandal_id: '' });
   const [binForm, setBinForm] = useState({ bin_id: '', name: '', capacity_kg: 100, mandal_id: '', ward_id: '', location: '' });
-  const [userForm, setUserForm] = useState({ username: '', password: 'Admin@123', full_name: '', role: 'collector' });
+  const [userForm, setUserForm] = useState({ username: '', password: '', full_name: '', role: 'collector' });
 
   const handleDistrictSubmit = async (e) => {
     e.preventDefault();
