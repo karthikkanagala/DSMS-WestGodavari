@@ -940,6 +940,7 @@ export default function ManageComplaints() {
                   onChange={(e) => setConfigForm({ ...configForm, level2_interval_mins: Number(e.target.value) })}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-800 font-semibold"
                 />
+                <span className="text-[10px] text-slate-400">Default 120 minutes (2 full hours after Level 1)</span>
               </div>
 
               <div>
@@ -954,6 +955,7 @@ export default function ManageComplaints() {
                   onChange={(e) => setConfigForm({ ...configForm, level3_interval_mins: Number(e.target.value) })}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-gray-700 bg-slate-50 dark:bg-gray-800 font-semibold"
                 />
+                <span className="text-[10px] text-slate-400">Default 120 minutes (2 full hours after Level 2)</span>
               </div>
 
               <div className="flex justify-end gap-2 pt-2">

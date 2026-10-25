@@ -7,9 +7,9 @@
  * - Time calculations based on ISO timestamps
  * - Automated 4-Level Escalation:
  *     Level 0: Assigned Field Worker (Collector)
- *     Level 1: Sanitation Supervisor (Triggered when SLA expires)
- *     Level 2: Mandal Officer (Triggered 1h past Level 1)
- *     Level 3: District Administrator (Triggered 1h past Level 2)
+ *     Level 1: Sanitation Supervisor (Triggered when initial SLA expires)
+ *     Level 2: Mandal Officer (Triggered 2 hours after Level 1)
+ *     Level 3: District Administrator (Triggered 2 hours after Level 2)
  * - Controllable Test Clock (Simulate +15m, +1h, +2h, +3h for demonstration/testing)
  * - Realistic West Godavari District Mandals, Wards, Workers & Seed Complaints
  */
@@ -86,12 +86,12 @@ export const MUNICIPAL_WORKERS = [
 ];
 
 export const DEFAULT_SLA_CONFIG = {
-  default_sla_hours: 3,         // Standard resolution SLA
+  default_sla_hours: 3,         // Standard resolution SLA (2 or 3 hours)
   urgent_sla_hours: 2,          // Urgent category SLA
   warning_threshold_mins: 30,   // "Approaching Deadline" warning window
-  level1_interval_mins: 0,      // Level 1 (Supervisor): Instant when SLA expires
-  level2_interval_mins: 60,     // Level 2 (Mandal Officer): +60m after Level 1
-  level3_interval_mins: 60,     // Level 3 (District Admin): +60m after Level 2
+  level1_interval_mins: 0,      // Level 1 (Supervisor): Instant when initial SLA expires
+  level2_interval_mins: 120,    // Level 2 (Mandal Officer): 2 hours (120 mins) after Level 1
+  level3_interval_mins: 120,    // Level 3 (District Admin): 2 hours (120 mins) after Level 2
 };
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,15 @@ export function getSlaConfig() {
   try {
     const raw = localStorage.getItem(SLA_CONFIG_STORAGE_KEY);
     if (!raw) return DEFAULT_SLA_CONFIG;
-    return { ...DEFAULT_SLA_CONFIG, ...JSON.parse(raw) };
+    const parsed = JSON.parse(raw);
+    // Automatically migrate legacy 60-minute configs to new mandatory 120-minute (2h) rule
+    if (parsed.level2_interval_mins === 60 || !parsed.level2_interval_mins) {
+      parsed.level2_interval_mins = 120;
+    }
+    if (parsed.level3_interval_mins === 60 || !parsed.level3_interval_mins) {
+      parsed.level3_interval_mins = 120;
+    }
+    return { ...DEFAULT_SLA_CONFIG, ...parsed };
   } catch (_) {
     return DEFAULT_SLA_CONFIG;
   }
@@ -225,6 +233,8 @@ export function calculateSlaStatus(ticket, now = getCurrentTime()) {
       overdueMs,
       percentElapsed: 100,
       isOverdue: true,
+      isEscalated: true,
+      isApproaching: false,
     };
   }
 
@@ -238,6 +248,8 @@ export function calculateSlaStatus(ticket, now = getCurrentTime()) {
       overdueMs: 0,
       percentElapsed,
       isOverdue: false,
+      isEscalated: false,
+      isApproaching: true,
     };
   }
 
@@ -276,46 +288,61 @@ export function evaluateTicketEscalation(ticket, now = getCurrentTime(), config 
   let targetLevel = currentLevel;
   let reasonsToAdd = [];
 
-  const l2ThresholdMs = deadlineTime + (config.level2_interval_mins || 60) * 60 * 1000;
-  const l3ThresholdMs = l2ThresholdMs + (config.level3_interval_mins || 60) * 60 * 1000;
+  const existingLevels = new Set((ticket.escalation_history || []).map((e) => e.level));
 
-  // Level 1: When SLA deadline passes
-  if (now > deadlineTime && currentLevel < 1) {
+  // Determine Level 1 timestamp (source of truth)
+  const l1Entry = (ticket.escalation_history || []).find((e) => e.level === 1);
+  const l1Timestamp = l1Entry ? new Date(l1Entry.timestamp).getTime() : deadlineTime;
+
+  // Level 2 threshold: 2 full hours after Level 1 escalation
+  const l2IntervalMs = (config.level2_interval_mins || 120) * 60 * 1000;
+  const l2ThresholdMs = l1Timestamp + l2IntervalMs;
+
+  // Determine Level 2 timestamp (source of truth)
+  const l2Entry = (ticket.escalation_history || []).find((e) => e.level === 2);
+  const l2Timestamp = l2Entry ? new Date(l2Entry.timestamp).getTime() : l2ThresholdMs;
+
+  // Level 3 threshold: 2 full hours after Level 2 escalation
+  const l3IntervalMs = (config.level3_interval_mins || 120) * 60 * 1000;
+  const l3ThresholdMs = l2Timestamp + l3IntervalMs;
+
+  // Level 1: When initial SLA deadline expires
+  if (now >= deadlineTime && currentLevel < 1 && !existingLevels.has(1)) {
     targetLevel = 1;
     reasonsToAdd.push({
       level: 1,
       timestamp: new Date(deadlineTime).toISOString(),
-      reason: `SLA resolution deadline (${ticket.sla_hours || 3} hours) expired without resolution. Automatically escalated to Sanitation Supervisor.`,
+      reason: `Initial SLA resolution deadline (${ticket.sla_hours || 3} hours) expired without resolution. Automatically escalated to Sanitation Supervisor.`,
       target_role: 'supervisor',
       actor: 'DSMS Automated SLA Engine',
     });
   }
 
-  // Level 2: When +1h past Level 1 passes
-  if (now > l2ThresholdMs && currentLevel < 2) {
+  // Level 2: Exactly 2 hours after Level 1 escalation
+  if (now >= l2ThresholdMs && targetLevel < 2 && !existingLevels.has(2)) {
     targetLevel = 2;
     reasonsToAdd.push({
       level: 2,
       timestamp: new Date(l2ThresholdMs).toISOString(),
-      reason: 'Unresolved 1 hour past Level 1 escalation. Automatically escalated to Mandal Officer for direct mandal-level intervention.',
+      reason: 'Unresolved 2 hours after Level 1 escalation. Automatically escalated to Mandal Officer for direct mandal-level intervention.',
       target_role: 'mandal_officer',
       actor: 'DSMS Automated SLA Engine',
     });
   }
 
-  // Level 3: When +1h past Level 2 passes
-  if (now > l3ThresholdMs && currentLevel < 3) {
+  // Level 3: Exactly 2 hours after Level 2 escalation
+  if (now >= l3ThresholdMs && targetLevel < 3 && !existingLevels.has(3)) {
     targetLevel = 3;
     reasonsToAdd.push({
       level: 3,
       timestamp: new Date(l3ThresholdMs).toISOString(),
-      reason: 'Critical SLA default: Unresolved 2 hours past supervisor escalation. Escalated to District Administrator for district-wide action.',
+      reason: 'Critical SLA default: Unresolved 2 hours after Level 2 escalation (4 hours past initial SLA). Escalated to District Administrator for district-wide action.',
       target_role: 'district_admin',
       actor: 'DSMS Automated SLA Engine',
     });
   }
 
-  if (targetLevel > currentLevel) {
+  if (targetLevel > currentLevel && reasonsToAdd.length > 0) {
     const updatedHistory = [...(ticket.escalation_history || []), ...reasonsToAdd];
     const newStatus = ticket.status === 'submitted' || ticket.status === 'assigned' ? 'escalated' : ticket.status;
 
@@ -328,12 +355,12 @@ export function evaluateTicketEscalation(ticket, now = getCurrentTime(), config 
       escalation_history: updatedHistory,
       status_history: [
         ...(ticket.status_history || []),
-        {
+        ...reasonsToAdd.map((r) => ({
           status: newStatus,
-          timestamp: new Date(now).toISOString(),
+          timestamp: r.timestamp,
           updated_by: 'DSMS Automated SLA Engine',
-          remarks: `Automated escalation to Level ${targetLevel} (${reasonsToAdd[reasonsToAdd.length - 1]?.target_role})`,
-        },
+          remarks: `Automated escalation to Level ${r.level} (${r.target_role}): ${r.reason}`,
+        })),
       ],
     };
     return { updated: true, ticket: updatedTicket };
@@ -369,7 +396,46 @@ function getStoredComplaintsRaw() {
     const raw = localStorage.getItem(COMPLAINT_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : null;
+    if (!Array.isArray(parsed)) return null;
+
+    // Migrate seeded tickets in localStorage if they contain legacy 1-hour intervals
+    let migrated = false;
+    const now = Date.now();
+    const h = 60 * 60 * 1000;
+    const cleanList = parsed.map((t) => {
+      if (t.id === 'TKT-WG-9045' && t.escalation_history?.some((e) => e.reason?.includes('1 hour'))) {
+        migrated = true;
+        return {
+          ...t,
+          created_at: new Date(now - 5.5 * h).toISOString(),
+          sla_deadline: new Date(now - 2.5 * h).toISOString(),
+          escalation_history: [
+            { level: 1, timestamp: new Date(now - 2.5 * h).toISOString(), reason: '3-hour SLA deadline expired without resolution.', target_role: 'supervisor', actor: 'DSMS Automated SLA Engine' },
+            { level: 2, timestamp: new Date(now - 0.5 * h).toISOString(), reason: 'Unresolved 2 hours after Level 1 escalation. Escalated to Mandal Officer for executive intervention.', target_role: 'mandal_officer', actor: 'DSMS Automated SLA Engine' },
+          ],
+        };
+      }
+      if (t.id === 'TKT-WG-9046' && t.escalation_history?.some((e) => e.reason?.includes('1h past supervisor'))) {
+        migrated = true;
+        return {
+          ...t,
+          created_at: new Date(now - 7.5 * h).toISOString(),
+          sla_deadline: new Date(now - 4.5 * h).toISOString(),
+          escalation_history: [
+            { level: 1, timestamp: new Date(now - 4.5 * h).toISOString(), reason: '3-hour SLA expired without resolution.', target_role: 'supervisor', actor: 'DSMS SLA Engine' },
+            { level: 2, timestamp: new Date(now - 2.5 * h).toISOString(), reason: 'Unresolved 2 hours after supervisor escalation.', target_role: 'mandal_officer', actor: 'DSMS SLA Engine' },
+            { level: 3, timestamp: new Date(now - 0.5 * h).toISOString(), reason: 'Critical unresolved delay: Unresolved 2 hours after Mandal Officer escalation (4 hours past initial SLA). Escalated to District Administrator.', target_role: 'district_admin', actor: 'DSMS SLA Engine' },
+          ],
+        };
+      }
+      return t;
+    });
+
+    if (migrated) {
+      saveStoredComplaintsRaw(cleanList);
+      return cleanList;
+    }
+    return parsed;
   } catch (_) {
     return null;
   }
@@ -541,31 +607,31 @@ export function getInitialDemoComplaints() {
       gps_source: 'Browser Geolocation',
       photo_url: null,
       reporter: { name: 'B. Venkat Rao', phone: '+91 91770 99881', is_anonymous: false },
-      created_at: new Date(now - 4.6 * h).toISOString(),
+      created_at: new Date(now - 5.5 * h).toISOString(),
       sla_hours: 3,
-      sla_deadline: new Date(now - 1.6 * h).toISOString(), // Overdue by 1h 36m (Level 2 Escalated!)
+      sla_deadline: new Date(now - 2.5 * h).toISOString(), // Overdue by 2h 30m (Level 2 Escalated: >2h past Level 1)
       status: 'escalated',
       escalation_level: 2,
       assigned_worker: { username: 'collector1', name: 'M. Appa Rao', phone: '+91 94401 23402' },
       assigned_ward: 'Ward 03 - Balusumoodi Junction',
       status_history: [
-        { status: 'submitted', timestamp: new Date(now - 4.6 * h).toISOString(), updated_by: 'Citizen', remarks: 'Reported' },
-        { status: 'assigned', timestamp: new Date(now - 4.1 * h).toISOString(), updated_by: 'Supervisor', remarks: 'Assigned' },
-        { status: 'escalated', timestamp: new Date(now - 1.6 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 1 escalation to Supervisor' },
-        { status: 'escalated', timestamp: new Date(now - 0.6 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 2 escalation to Mandal Officer' }
+        { status: 'submitted', timestamp: new Date(now - 5.5 * h).toISOString(), updated_by: 'Citizen', remarks: 'Reported' },
+        { status: 'assigned', timestamp: new Date(now - 5.0 * h).toISOString(), updated_by: 'Supervisor', remarks: 'Assigned' },
+        { status: 'escalated', timestamp: new Date(now - 2.5 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 1 escalation to Supervisor' },
+        { status: 'escalated', timestamp: new Date(now - 0.5 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 2 escalation to Mandal Officer (2 hours after Level 1)' }
       ],
       escalation_history: [
         {
           level: 1,
-          timestamp: new Date(now - 1.6 * h).toISOString(),
+          timestamp: new Date(now - 2.5 * h).toISOString(),
           reason: '3-hour SLA deadline expired without resolution.',
           target_role: 'supervisor',
           actor: 'DSMS Automated SLA Engine',
         },
         {
           level: 2,
-          timestamp: new Date(now - 0.6 * h).toISOString(),
-          reason: 'Unresolved 1 hour past Level 1. Escalated to Mandal Officer for executive intervention.',
+          timestamp: new Date(now - 0.5 * h).toISOString(),
+          reason: 'Unresolved 2 hours after Level 1 escalation. Escalated to Mandal Officer for executive intervention.',
           target_role: 'mandal_officer',
           actor: 'DSMS Automated SLA Engine',
         }
@@ -589,24 +655,24 @@ export function getInitialDemoComplaints() {
       gps_source: 'Browser Geolocation',
       photo_url: null,
       reporter: { name: 'K. Subba Rao', phone: '+91 94900 12345', is_anonymous: false },
-      created_at: new Date(now - 5.8 * h).toISOString(),
+      created_at: new Date(now - 7.5 * h).toISOString(),
       sla_hours: 3,
-      sla_deadline: new Date(now - 2.8 * h).toISOString(), // Overdue by 2h 48m (Level 3 Escalated to District Admin!)
+      sla_deadline: new Date(now - 4.5 * h).toISOString(), // Overdue by 4h 30m (Level 3 Escalated: >2h past Level 2)
       status: 'escalated',
       escalation_level: 3,
       assigned_worker: { username: 'collector2', name: 'P. Srinivasa Rao', phone: '+91 94401 23403' },
       assigned_ward: 'Ward 03 - Fire Station Road',
       status_history: [
-        { status: 'submitted', timestamp: new Date(now - 5.8 * h).toISOString(), updated_by: 'Citizen', remarks: 'Complaint submitted' },
-        { status: 'assigned', timestamp: new Date(now - 5.0 * h).toISOString(), updated_by: 'Supervisor', remarks: 'Assigned to Ward 03 worker' },
-        { status: 'escalated', timestamp: new Date(now - 2.8 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 1 escalation to Supervisor' },
-        { status: 'escalated', timestamp: new Date(now - 1.8 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 2 escalation to Mandal Officer' },
-        { status: 'escalated', timestamp: new Date(now - 0.8 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 3 escalation to District Administrator' }
+        { status: 'submitted', timestamp: new Date(now - 7.5 * h).toISOString(), updated_by: 'Citizen', remarks: 'Complaint submitted' },
+        { status: 'assigned', timestamp: new Date(now - 7.0 * h).toISOString(), updated_by: 'Supervisor', remarks: 'Assigned to Ward 03 worker' },
+        { status: 'escalated', timestamp: new Date(now - 4.5 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 1 escalation to Supervisor' },
+        { status: 'escalated', timestamp: new Date(now - 2.5 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 2 escalation to Mandal Officer (2 hours after Level 1)' },
+        { status: 'escalated', timestamp: new Date(now - 0.5 * h).toISOString(), updated_by: 'DSMS SLA Engine', remarks: 'Level 3 escalation to District Administrator (2 hours after Level 2)' }
       ],
       escalation_history: [
-        { level: 1, timestamp: new Date(now - 2.8 * h).toISOString(), reason: '3-hour SLA expired without resolution.', target_role: 'supervisor', actor: 'DSMS SLA Engine' },
-        { level: 2, timestamp: new Date(now - 1.8 * h).toISOString(), reason: 'Overdue +1h past supervisor notice.', target_role: 'mandal_officer', actor: 'DSMS SLA Engine' },
-        { level: 3, timestamp: new Date(now - 0.8 * h).toISOString(), reason: 'Critical unresolved delay: Escalated to District Collector & Magistrate.', target_role: 'district_admin', actor: 'DSMS SLA Engine' }
+        { level: 1, timestamp: new Date(now - 4.5 * h).toISOString(), reason: '3-hour SLA expired without resolution.', target_role: 'supervisor', actor: 'DSMS SLA Engine' },
+        { level: 2, timestamp: new Date(now - 2.5 * h).toISOString(), reason: 'Unresolved 2 hours after supervisor escalation.', target_role: 'mandal_officer', actor: 'DSMS SLA Engine' },
+        { level: 3, timestamp: new Date(now - 0.5 * h).toISOString(), reason: 'Critical unresolved delay: Unresolved 2 hours after Mandal Officer escalation (4 hours past initial SLA). Escalated to District Administrator.', target_role: 'district_admin', actor: 'DSMS SLA Engine' }
       ],
       resolution_remarks: null,
       resolution_photo_url: null,

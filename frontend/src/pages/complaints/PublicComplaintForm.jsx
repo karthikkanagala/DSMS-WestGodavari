@@ -287,7 +287,7 @@ export default function PublicComplaintForm() {
             </div>
 
             <p className="text-[11px] text-slate-500 dark:text-gray-400 italic pt-1 border-t border-slate-200 dark:border-gray-700">
-              ⚡ If this ticket is not resolved within {createdTicket.sla_hours} hours, it will automatically escalate to the Sanitation Supervisor and Mandal Officer.
+              ⚡ If this ticket is not resolved within {createdTicket.sla_hours} hours, it will automatically escalate to the Sanitation Supervisor (Level 1), and then at 2-hour intervals to the Mandal Officer (Level 2) and District Administrator (Level 3).
             </p>
           </div>
 

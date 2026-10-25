@@ -621,7 +621,7 @@ export default function Dashboard() {
               Citizen Garbage Complaints & Escalation Monitoring
             </h3>
             <p className="text-xs text-slate-300">
-              Live tracking of citizen grievance tickets, 3-hour resolution SLAs, and automated 4-tier supervisor escalation.
+              Live tracking of citizen grievance tickets, 2–3 hour resolution SLAs, and automated 2-hour tiered escalations (Supervisor → Mandal Officer → District Admin).
             </p>
           </div>
 
