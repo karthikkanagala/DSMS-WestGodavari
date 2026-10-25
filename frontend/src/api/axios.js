@@ -10,18 +10,28 @@ const API = axios.create({
   timeout: 2500,
 });
 
-// Attach JWT token to every request
+// Attach JWT token and demo headers to every request
 API.interceptors.request.use((config) => {
   const token = localStorage.getItem('dsms_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
+
+  const user = localStorage.getItem('dsms_user');
+  if (user) {
+    try {
+      const parsed = JSON.parse(user);
+      if (parsed?.username) config.headers['X-Demo-Username'] = parsed.username;
+    } catch (_) {}
+  }
   return config;
 });
 
-// Handle 401 globally — clear auth and redirect to login
+// Handle 401 globally — do NOT redirect or clear state if in demo/mock mode
 API.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401) {
+    const token = localStorage.getItem('dsms_token');
+    const isMock = !token || token.startsWith('mock_token_');
+    if (err.response?.status === 401 && !isMock) {
       localStorage.removeItem('dsms_token');
       localStorage.removeItem('dsms_user');
       window.location.href = '/login';

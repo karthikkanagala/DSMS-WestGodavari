@@ -13,6 +13,7 @@ import API from '../../api/axios';
 import { useAuth } from '../../auth/AuthContext';
 import { fmt, statusBadge } from '../../utils/formatters';
 import { getLocalCollections, getLocalOverflows } from '../../utils/mockStorage';
+import { getComplaints, calculateSlaStatus, getCurrentTime } from '../../utils/complaintStorage';
 import {
   Trash2, PlusCircle, AlertTriangle, CheckCircle2,
   MapPin, Clock, BarChart2, TrendingUp, ShieldCheck,
@@ -32,6 +33,7 @@ export default function CollectorDashboard() {
   const { user } = useAuth();
   const [todayCollections, setTodayCollections] = useState([]);
   const [overflows, setOverflows] = useState([]);
+  const [assignedComplaints, setAssignedComplaints] = useState([]);
   const [loading, setLoading] = useState(false);
   const [previewImage, setPreviewImage] = useState(null);
 
@@ -67,6 +69,14 @@ export default function CollectorDashboard() {
         { _id: 'o1', bin_ref: 'BIN-0002', location: 'Bus Stand Junction, Tadepalligudem', detected_at: new Date(Date.now() - 20 * 60000).toISOString() },
       ]]);
     }
+    try {
+      const allComplaints = getComplaints();
+      const myComplaints = allComplaints.filter(c =>
+        (c.assigned_worker?.username === user?.username || c.mandal?.toLowerCase() === (user?.mandal || 'tadepalligudem').toLowerCase()) &&
+        c.status !== 'resolved' && c.status !== 'rejected'
+      );
+      setAssignedComplaints(myComplaints);
+    } catch (_) {}
     setLoading(false);
   };
 
@@ -160,6 +170,63 @@ export default function CollectorDashboard() {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Citizen Public Complaints Assigned to Collector */}
+      {assignedComplaints.length > 0 && (
+        <div className="space-y-2.5">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-black text-amber-700 dark:text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+              <AlertTriangle size={14} className="text-amber-500" />
+              Citizen Complaints Assigned ({assignedComplaints.length})
+            </h3>
+            <button
+              onClick={() => navigate('/complaints')}
+              className="text-xs text-emerald-600 font-bold hover:underline"
+            >
+              View All Complaints →
+            </button>
+          </div>
+
+          <div className="space-y-2">
+            {assignedComplaints.map((c) => {
+              const sla = calculateSlaStatus(c, getCurrentTime());
+              return (
+                <div
+                  key={c.id}
+                  onClick={() => navigate('/complaints')}
+                  className="bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 rounded-2xl p-4 flex items-center justify-between gap-3 cursor-pointer hover:bg-amber-100/60 transition-all shadow-sm"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-black text-xs text-amber-800 dark:text-amber-300 bg-amber-200/70 dark:bg-amber-900/60 px-2 py-0.5 rounded-lg">
+                        {c.id}
+                      </span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${sla.badgeClass}`}>
+                        {sla.timeText}
+                      </span>
+                    </div>
+                    <p className="text-xs font-bold text-slate-900 dark:text-white mt-1 truncate">
+                      {c.title}
+                    </p>
+                    <p className="text-[11px] text-slate-500 truncate flex items-center gap-1 mt-0.5">
+                      <MapPin size={11} className="text-emerald-600" />
+                      <span>{c.ward} • {c.address}</span>
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={(e) => { e.stopPropagation(); navigate('/complaints'); }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 flex-shrink-0 shadow-sm"
+                  >
+                    <span>Resolve</span>
+                    <ArrowUpRight size={12} />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

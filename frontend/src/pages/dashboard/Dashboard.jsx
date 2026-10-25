@@ -14,6 +14,7 @@ import { DonutChart } from '../../components/charts/Charts';
 import VideoPlayerModal from '../../components/ui/VideoPlayerModal';
 import { usePolling } from '../../hooks/usePolling';
 import API from '../../api/axios';
+import { getComplaints, calculateSlaStatus, getCurrentTime } from '../../utils/complaintStorage';
 import {
   Layers, MapPin, Trash2, CheckCircle2, Clock, XCircle,
   AlertTriangle, Filter, RotateCcw, TrendingUp, TrendingDown,
@@ -275,6 +276,45 @@ export default function Dashboard() {
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(new Date());
+  const [complaintStats, setComplaintStats] = useState({ total: 0, pending: 0, escalated: 0, resolved: 0, critical: 0 });
+
+  useEffect(() => {
+    const loadComplaintStats = () => {
+      const all = getComplaints();
+      const now = getCurrentTime();
+      let pending = 0;
+      let escalated = 0;
+      let resolved = 0;
+      let critical = 0;
+
+      all.forEach(c => {
+        const sla = calculateSlaStatus(c, now);
+        if (sla.isResolved) {
+          resolved++;
+        } else {
+          pending++;
+          if (sla.isEscalated) {
+            escalated++;
+          }
+          if (sla.isApproaching || sla.isEscalated) {
+            critical++;
+          }
+        }
+      });
+
+      setComplaintStats({
+        total: all.length,
+        pending,
+        escalated,
+        resolved,
+        critical
+      });
+    };
+
+    loadComplaintStats();
+    window.addEventListener('dsms_complaints_updated', loadComplaintStats);
+    return () => window.removeEventListener('dsms_complaints_updated', loadComplaintStats);
+  }, []);
 
   const mandalParam = searchParams.get('mandal');
 
@@ -559,6 +599,59 @@ export default function Dashboard() {
             </button>
           </div>
         )}
+      </div>
+
+      {/* Public Grievance & SLA Escalation Live Banner */}
+      <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 sm:p-5 shadow-lg border border-indigo-900/40 relative overflow-hidden">
+        <div className="relative z-10 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                <Clock size={12} />
+                2–3h SLA Protocol Active
+              </span>
+              {complaintStats.escalated > 0 && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-red-500/20 text-red-300 border border-red-500/40 animate-pulse">
+                  <AlertTriangle size={12} />
+                  {complaintStats.escalated} Escalated Overdue
+                </span>
+              )}
+            </div>
+            <h3 className="text-base sm:text-lg font-black tracking-tight text-white flex items-center gap-2">
+              Citizen Garbage Complaints & Escalation Monitoring
+            </h3>
+            <p className="text-xs text-slate-300">
+              Live tracking of citizen grievance tickets, 3-hour resolution SLAs, and automated 4-tier supervisor escalation.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap w-full md:w-auto justify-between md:justify-end">
+            <div className="flex items-center gap-2 bg-slate-800/80 backdrop-blur px-3 py-2 rounded-xl border border-slate-700">
+              <div className="text-center px-2">
+                <div className="text-lg font-black text-amber-400 leading-none">{complaintStats.pending}</div>
+                <div className="text-[10px] font-semibold text-slate-400 mt-0.5 uppercase tracking-wider">Active</div>
+              </div>
+              <div className="w-px h-6 bg-slate-700" />
+              <div className="text-center px-2">
+                <div className="text-lg font-black text-red-400 leading-none">{complaintStats.escalated}</div>
+                <div className="text-[10px] font-semibold text-slate-400 mt-0.5 uppercase tracking-wider">Overdue</div>
+              </div>
+              <div className="w-px h-6 bg-slate-700" />
+              <div className="text-center px-2">
+                <div className="text-lg font-black text-emerald-400 leading-none">{complaintStats.resolved}</div>
+                <div className="text-[10px] font-semibold text-slate-400 mt-0.5 uppercase tracking-wider">Resolved</div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => navigate('/complaints')}
+              className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-bold text-xs shadow-md hover:from-emerald-600 hover:to-teal-600 transition-all flex-shrink-0 cursor-pointer"
+            >
+              <span>Manage Complaints</span>
+              <ArrowUpRight size={14} />
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* 8 Stat Cards — 4x2 Grid (Generous Width, Zero Text Overflow, Zero Truncation) */}

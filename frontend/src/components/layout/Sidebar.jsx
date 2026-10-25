@@ -17,6 +17,7 @@ import Logo from '../ui/Logo';
 const navConfig = {
   [ROLES.SYSADMIN]: [
     { label: 'Dashboard',         icon: LayoutDashboard, to: '/dashboard', exact: true },
+    { label: 'Public Complaints', icon: AlertTriangle,   to: '/complaints' },
     { label: 'Setup Wizard',      icon: Wrench,          to: '/setup', exact: true },
     { label: 'Hierarchy',         icon: Layers,          children: [
       { label: 'Mandals',         to: '/admin/mandals' },
@@ -32,6 +33,7 @@ const navConfig = {
   ],
   [ROLES.DISTRICT_ADMIN]: [
     { label: 'Dashboard',         icon: LayoutDashboard, to: '/dashboard', exact: true },
+    { label: 'Complaints & SLA',  icon: AlertTriangle,   to: '/complaints' },
     { label: 'Hierarchy',         icon: Layers,          children: [
       { label: 'Mandals',         to: '/admin/mandals' },
       { label: 'Wards / Villages',to: '/admin/wards' },
@@ -46,6 +48,7 @@ const navConfig = {
   ],
   [ROLES.MANDAL_OFFICER]: [
     { label: 'Dashboard',         icon: LayoutDashboard, to: '/dashboard', exact: true },
+    { label: 'Public Complaints', icon: AlertTriangle,   to: '/complaints' },
     { label: 'Wards / Villages',  icon: Map,             to: '/admin/wards' },
     { label: 'Public Bins',       icon: Trash2,          to: '/admin/bins' },
     { label: 'Collection Records',icon: ClipboardList,   to: '/admin/collections' },
@@ -54,12 +57,14 @@ const navConfig = {
   ],
   [ROLES.SUPERVISOR]: [
     { label: 'Dashboard',         icon: LayoutDashboard, to: '/dashboard', exact: true },
+    { label: 'Escalations & Tickets', icon: AlertTriangle, to: '/complaints' },
     { label: 'Collection Records',icon: ClipboardList,   to: '/admin/collections' },
     { label: 'Reports',           icon: BarChart2,       to: '/reports' },
     { label: 'Notifications',     icon: Bell,            to: '/notifications' },
   ],
   [ROLES.COLLECTOR]: [
     { label: 'My Dashboard',      icon: Home,            to: '/collector', exact: true },
+    { label: 'My Complaints',     icon: AlertTriangle,   to: '/complaints', exact: true },
     { label: 'Daily Collection',  icon: Trash2,          to: '/collector/submit', exact: true },
     { label: 'Collection History',icon: ClipboardList,   to: '/collector/history', exact: true },
     { label: 'Notifications',     icon: Bell,            to: '/notifications', exact: true },

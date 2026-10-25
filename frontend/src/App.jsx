@@ -25,6 +25,10 @@ import Reports from './pages/reports/Reports';
 import Notifications from './pages/notifications/Notifications';
 import Settings from './pages/Settings';
 
+import PublicComplaintForm from './pages/complaints/PublicComplaintForm';
+import PublicComplaintTracker from './pages/complaints/PublicComplaintTracker';
+import ManageComplaints from './pages/complaints/ManageComplaints';
+
 export default function App() {
   const [showIntro, setShowIntro] = useState(() => {
     // Show on initial visit per session
@@ -44,6 +48,14 @@ export default function App() {
           {/* Public Login Route */}
           <Route path="/login" element={<Login />} />
 
+          {/* Public Garbage Complaint Portal (No login required) */}
+          <Route path="/complaints/new" element={<PublicComplaintForm />} />
+          <Route path="/report-garbage" element={<PublicComplaintForm />} />
+          <Route path="/complaints/track" element={<PublicComplaintTracker />} />
+          <Route path="/complaints/track/:id" element={<PublicComplaintTracker />} />
+          <Route path="/track-complaint" element={<PublicComplaintTracker />} />
+          <Route path="/track-complaint/:id" element={<PublicComplaintTracker />} />
+
           {/* Authenticated Layout */}
           <Route
             element={
@@ -55,6 +67,10 @@ export default function App() {
             {/* Default Dashboard */}
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/bin/:id" element={<BinDetails />} />
+
+            {/* Public Complaints & SLA Hub (Role-scoped for staff) */}
+            <Route path="/complaints" element={<ManageComplaints />} />
+            <Route path="/collector/complaints" element={<ManageComplaints />} />
 
             {/* System Setup Wizard (SysAdmin only) */}
             <Route

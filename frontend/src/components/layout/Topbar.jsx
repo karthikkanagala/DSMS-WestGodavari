@@ -86,6 +86,18 @@ export default function Topbar({ onRefresh, onMobileMenuToggle }) {
 
       {/* Right controls */}
       <div className="flex items-center gap-2.5 flex-shrink-0">
+        {/* Public Citizen Portal Quick Link */}
+        <a
+          href="/complaints/new"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="hidden lg:flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-300 dark:border-emerald-700/60 rounded-xl text-xs font-bold text-emerald-800 dark:text-emerald-300 hover:bg-emerald-100 transition-colors shadow-xs"
+          title="Open Public Citizen Garbage Reporting Form"
+        >
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+          <span>Public Grievance Portal</span>
+        </a>
+
         {/* Date badge */}
         <div className="hidden md:flex items-center gap-1.5 px-3.5 py-1.5 bg-slate-50 dark:bg-gray-800/90 rounded-xl border border-slate-200/60 dark:border-gray-700 text-xs font-semibold text-slate-600 dark:text-gray-300 shadow-sm">
           <Calendar size={13} className="text-emerald-600" />

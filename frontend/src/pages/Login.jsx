@@ -8,7 +8,7 @@
  * - Developer Attribution: "Designed & Developed by Karthik Kanagala"
  */
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import VideoPlayerModal from '../components/ui/VideoPlayerModal';
 import Logo from '../components/ui/Logo';
@@ -225,6 +225,33 @@ export default function Login() {
                 <span>⚠</span> {error}
               </div>
             )}
+
+            {/* Citizen Public Grievance Portal Box */}
+            <div className="p-3.5 rounded-2xl bg-emerald-50/80 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800/60 flex items-center justify-between gap-2 shadow-xs">
+              <div className="space-y-0.5 min-w-0">
+                <span className="text-[10px] font-black uppercase text-emerald-800 dark:text-emerald-300 tracking-wider flex items-center gap-1">
+                  <Sparkles size={11} className="text-emerald-600" /> Public Citizen Service
+                </span>
+                <p className="text-xs font-bold text-slate-800 dark:text-gray-200 truncate">
+                  Report Garbage &amp; Overflowing Bins
+                </p>
+                <p className="text-[10px] text-slate-500 truncate">2–3 hr SLA guarantee • No login required</p>
+              </div>
+              <div className="flex flex-col gap-1 flex-shrink-0">
+                <Link
+                  to="/complaints/new"
+                  className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow-sm text-center transition-all hover:scale-102"
+                >
+                  File Report
+                </Link>
+                <Link
+                  to="/complaints/track"
+                  className="px-3 py-1 rounded-xl border border-emerald-400 text-emerald-800 dark:text-emerald-300 font-bold text-[10px] text-center hover:bg-emerald-100/60"
+                >
+                  Track Status
+                </Link>
+              </div>
+            </div>
 
             <form onSubmit={handleSubmit} className="space-y-3.5">
               <div>
